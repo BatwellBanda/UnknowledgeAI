@@ -1,0 +1,10 @@
+**/.env
+**/.venv/
+**/venv/
+**/venv_new/
+**/__pycache__/
+**/*.py[cod]
+**/uploads/
+**/.pytest_cache/
+**/.coverage
+tmp/

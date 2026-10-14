@@ -1,0 +1,2 @@
+# Tests use Python's unittest runner and HTTPX's ASGI transport.
+httpx==0.28.1
