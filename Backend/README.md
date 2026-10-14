@@ -1,6 +1,6 @@
 # UniKnowledge AI backend
 
-FastAPI backend for learning and document processing. Upload, extraction, chunking, and embeddings are implemented. Search, grounded answers, courses, and adaptive learning are upcoming work in [the roadmap](../Docs/IMPROVEMENT_ROADMAP.md).
+FastAPI backend for learning and document processing. Authentication, courses/enrolments, explicit private/shared materials, upload, extraction, chunking, and embeddings are implemented. Search, grounded answers, and adaptive learning are upcoming work in [the roadmap](../Docs/IMPROVEMENT_ROADMAP.md).
 
 ## Setup on Windows
 
@@ -57,8 +57,14 @@ Open <http://127.0.0.1:8000/docs>. Log in, select **Authorize**, and paste the t
 | POST | `/auth/register` | Creates a STUDENT. Omit role or supply STUDENT, case-insensitively; other roles return 422. |
 | POST | `/auth/login` | Returns a 60-minute bearer token. |
 | GET | `/users/me` | Returns the authenticated user's profile and current database role. |
-| GET | `/documents?offset=0&limit=20` | Lists only the caller's documents, with limit 1-100. |
-| GET | `/documents/{id}` | Returns owned document metadata; missing or other users' documents return 404. |
+| GET | `/courses` | Authenticated course catalog; `mine=true` limits to taught/enrolled courses. |
+| POST | `/courses` | Lecturer/admin creates a course and becomes its assigned instructor. |
+| GET | `/courses/{id}` | Authenticated course metadata. |
+| POST | `/courses/{id}/enroll` | Student self-enrolment; repeating it returns the same enrolment. |
+| DELETE | `/courses/{id}/enroll` | Student removes their own enrolment and loses shared access. |
+| GET | `/documents?offset=0&limit=20` | Lists owned documents and authorised shared material, with limit 1-100; optional `course_id` filter. |
+| GET | `/documents/{id}` | Returns readable metadata; inaccessible documents return 404. |
+| GET | `/documents/{id}/text` | Reads authorised extracted text; returns 400 if extraction is unavailable. |
 | POST | `/documents/upload` | Accepts supported extensions, up to 20 MB. |
 | POST | `/documents/{id}/extract` | Extracts text; requires ownership. |
 | POST | `/documents/{id}/chunk` | Creates chunks; requires ownership. |
@@ -74,7 +80,17 @@ Registration example:
 }
 ```
 
-New passwords require at least 12 characters and at most 72 UTF-8 bytes. They are not trimmed or silently truncated. Names are trimmed and must contain 1-150 characters. Privileged roles require a future controlled provisioning workflow. The reusable `require_role` dependency checks the user's current database role; document access is governed separately by ownership.
+New passwords require at least 12 characters and at most 72 UTF-8 bytes. They are not trimmed or silently truncated. Names are trimmed and must contain 1-150 characters. Privileged roles require a future controlled provisioning workflow. The reusable `require_role` dependency checks the user's current database role and protects course creation and self-enrolment.
+
+### Courses and materials
+
+Course creation accepts `{"code": "ICT101", "title": "Programming", "description": "Optional description"}`. Codes are normalised to uppercase and are unique. The creating lecturer or administrator is the assigned instructor. Course metadata is available to authenticated users; this initial catalog permits open self-enrolment by students. Programme restrictions, approval/invitations, and instructor reassignment are not implemented yet.
+
+Document uploads still accept the original `file` field. Optional multipart fields are `course_id` and `visibility` (`private`, the default, or `course`). A course link requires the uploader to be its instructor or an enrolled member. Only the assigned instructor, with a current LECTURER or ADMIN role, can publish `course` material.
+
+Private documents remain owner-only, even when linked to a course: instructors and administrators cannot inspect students' private notes through these APIs. Shared material is readable by its owner, assigned instructor, and enrolled students. Permissions are applied in the database query; a course filter does not bypass them. Extraction, chunking, and embedding remain owner-only. Unenrolment revokes shared access immediately while preserving access to the student's own notes.
+
+Migration `a62c941fe308` adds courses, enrolments, and document visibility. Existing documents become private with no course association. Apply it with `python -m alembic upgrade head` on each environment before using the changed APIs. It has already been applied to the current local development database. No existing accounts were assigned new roles.
 
 ### Existing accounts
 
@@ -93,7 +109,15 @@ cd C:\Dev\UniKnowledgeAI\Backend
 
 Tests use Python's unittest runner and HTTPX's ASGI transport. They set a test signing secret and database URL before importing the app and create fresh in-memory SQLite tables for each API case. They do not connect to the development PostgreSQL database, modify uploaded files, or download an embedding model.
 
-Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, document privacy, and pagination. PostgreSQL migrations, vector retrieval, extraction quality, and model generation need separate integration checks.
+Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, course creation/enrolment, publishing, student privacy, revocation, upload failure cleanup, and pagination. Vector retrieval, broader extraction quality, and model generation need separate integration checks.
+
+The opt-in PostgreSQL migration check uses the configured database but creates a fresh schema and rolls its entire transaction back:
+
+```powershell
+.\venv\Scripts\python.exe tests/verify_course_migration.py
+```
+
+It verifies upgrade/downgrade/re-upgrade, existing document preservation, and database constraints. It requires permission to create schemas and the enabled pgvector extension. It never downgrades the development schema.
 
 ## Current limits
 

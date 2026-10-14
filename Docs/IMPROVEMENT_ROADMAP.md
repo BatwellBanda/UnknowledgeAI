@@ -129,9 +129,13 @@ Progress on 14 October 2026:
 2. Implemented: explicit bcrypt byte limits without truncation, legacy short-password compatibility, required JWT expiry/UUID subject, and controlled 401 responses.
 3. Implemented: .env.example, corrected ignore rules, and [backend setup instructions](../Backend/README.md). A clean dependency reinstall remains to be verified; the existing venv passes pip check.
 4. Implemented: GET /users/me and paginated, owner-scoped document list/detail APIs.
-5. Next: course permissions and source-location extraction before introducing search and chat.
+5. Implemented: courses, student self-enrolment, lecturer/admin course creation, and optional course associations with private/shared document permissions. Source-location extraction is next before introducing search and chat.
 
 Verification: 22 regression tests passed through the API/service/password layers using an isolated SQLite database. Python syntax checks passed and pip check reported no broken requirements in Backend/venv. This does not establish PostgreSQL migration or embedding-pipeline correctness.
+
+Course batch verification: 44 regression tests pass, including the original foundation suite. A separate PostgreSQL test verified migrations in an isolated transaction-scoped schema, legacy document preservation, uniqueness/visibility/foreign-key constraints, downgrade, and re-upgrade. Migration a62c941fe308 was then applied to the local database: its existing document remained unchanged and private; roles/users/chunk counts were preserved; schema comparison found no model differences. Embedding generation and source-location extraction remain outside this verification.
+
+Initial course policy: the authenticated catalog allows open student self-enrolment. The creator is the assigned instructor. Only that instructor with a lecturer/admin role can publish course materials. Students' course-linked notes stay private unless a separate sharing workflow is implemented later. Programme restrictions, enrollment approval, and instructor reassignment remain future work.
 
 This batch supports the existing architecture. A backend rewrite is not justified by the reviewed code.
 

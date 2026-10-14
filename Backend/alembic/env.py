@@ -5,6 +5,7 @@ from app.models.role import Role
 from app.models.user import User
 from app.models.document import Document
 from app.models.chunk import DocumentChunk
+from app.models.course import Course, Enrollment
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -64,6 +65,17 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # Tests and callers may supply a connection with an isolated schema/transaction.
+    supplied_connection = config.attributes.get("connection")
+    if supplied_connection is not None:
+        context.configure(
+            connection=supplied_connection, target_metadata=target_metadata,
+            version_table_schema=config.attributes.get("version_table_schema"),
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

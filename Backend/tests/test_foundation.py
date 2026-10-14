@@ -13,7 +13,7 @@ import bcrypt
 import httpx
 from fastapi import HTTPException
 from jose import jwt
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -23,6 +23,7 @@ from app.core.security import (
 )
 from app.main import app
 from app.models.document import Document
+from app.models.course import Course, Enrollment
 from app.models.role import Role
 from app.models.user import User
 from app.schemas.user import UserRegister
@@ -57,7 +58,7 @@ class PasswordTests(unittest.TestCase):
         self.assertFalse(verify_password(PASSWORD, "not-a-bcrypt-hash"))
 
 
-class FoundationAPITests(unittest.IsolatedAsyncioTestCase):
+class APITestCase(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         cls.fixture_hash = hash_password(PASSWORD)
@@ -66,7 +67,11 @@ class FoundationAPITests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
         )
-        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Document.__table__])
+        @event.listens_for(self.engine, "connect")
+        def enable_foreign_keys(connection, _):
+            connection.execute("PRAGMA foreign_keys=ON")
+
+        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Course.__table__, Enrollment.__table__, Document.__table__])
         self.db = Session(self.engine)
         self.student_role = Role(name="STUDENT")
         self.db.add_all([self.student_role, Role(name="LECTURER"), Role(name="ADMIN")])
@@ -98,6 +103,8 @@ class FoundationAPITests(unittest.IsolatedAsyncioTestCase):
     def registration(self, **changes):
         return {"full_name": " New Student ", "email": "new@example.com", "password": PASSWORD, **changes}
 
+
+class FoundationAPITests(APITestCase):
     async def test_registration_defaults_to_student(self):
         response = await self.client.post("/auth/register", json=self.registration())
         self.assertEqual(response.status_code, 200, response.text)
