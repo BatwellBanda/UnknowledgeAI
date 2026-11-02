@@ -1,5 +1,6 @@
 import os
 import uuid
+from pathlib import Path
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,6 +27,18 @@ def get_readable_document(db: Session, document_id, user: User) -> Document:
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+def original_document_file(db: Session, document_id, user: User):
+    document = get_readable_document(db, document_id, user)
+    root = Path(UPLOAD_DIR).resolve()
+    path = (root / document.stored_filename).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Original file unavailable")
+    # An uploaded filename is a display label, never a filesystem path.
+    filename = document.original_filename.replace("\\", "/").rsplit("/", 1)[-1]
+    filename = "".join(c for c in filename if ord(c) >= 32 and ord(c) != 127)
+    return path, filename or "material"
 
 
 def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, visibility="private") -> Document:

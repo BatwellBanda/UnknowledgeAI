@@ -24,6 +24,8 @@ from app.core.security import (
 from app.main import app
 from app.models.document import Document
 from app.models.course import Course, Enrollment
+from app.models.chunk import DocumentChunk
+from app.models.processing_job import ProcessingJob
 from app.models.role import Role
 from app.models.user import User
 from app.schemas.user import UserRegister
@@ -71,7 +73,7 @@ class APITestCase(unittest.IsolatedAsyncioTestCase):
         def enable_foreign_keys(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
 
-        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Course.__table__, Enrollment.__table__, Document.__table__])
+        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Course.__table__, Enrollment.__table__, Document.__table__, DocumentChunk.__table__, ProcessingJob.__table__])
         self.db = Session(self.engine)
         self.student_role = Role(name="STUDENT")
         self.db.add_all([self.student_role, Role(name="LECTURER"), Role(name="ADMIN")])

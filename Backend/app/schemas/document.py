@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class DocumentResponse(BaseModel):
     id: uuid.UUID
+    owner_id: uuid.UUID
     course_id: uuid.UUID | None = None
     visibility: Literal["private", "course"] = "private"
     original_filename: str

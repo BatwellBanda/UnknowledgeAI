@@ -6,6 +6,7 @@ The transaction is rolled back; no development tables or records are altered.
 """
 import sys
 import uuid
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,7 +38,17 @@ def verify():
             connection.execute(text("INSERT INTO roles (id, name) VALUES (:id, 'STUDENT')"), {"id": role_id})
             connection.execute(text("INSERT INTO users (id, full_name, email, hashed_password, role_id) VALUES (:id, 'Migration test', 'migration@example.com', 'fixture', :role)"), {"id": user_id, "role": role_id})
             connection.execute(text("INSERT INTO documents (id, owner_id, original_filename, stored_filename, file_type, file_size_bytes, processing_status, extracted_text) VALUES (:id, :owner, 'old.txt', 'old.txt', 'txt', 3, 'extracted', 'old')"), {"id": document_id, "owner": user_id})
+            chunk_id = uuid.uuid4()
+            connection.execute(text("INSERT INTO document_chunks (id, document_id, chunk_index, content) VALUES (:id, :document, 0, 'old')"), {"id": chunk_id, "document": document_id})
             command.upgrade(config, "head")
+            assert connection.scalar(text("SELECT extracted_segments IS NULL FROM documents WHERE id = :id"), {"id": document_id})
+            assert connection.scalar(text("SELECT source_location IS NULL FROM document_chunks WHERE id = :id"), {"id": chunk_id})
+            source = {"kind": "txt_lines", "line_start": 1, "line_end": 1}
+            segments = [{"text": "old", "location": source}]
+            connection.execute(text("UPDATE documents SET extracted_segments = CAST(:segments AS json) WHERE id = :id"), {"id": document_id, "segments": json.dumps(segments)})
+            connection.execute(text("UPDATE document_chunks SET source_location = CAST(:source AS json) WHERE id = :id"), {"id": chunk_id, "source": json.dumps(source)})
+            assert connection.scalar(text("SELECT extracted_segments FROM documents WHERE id = :id"), {"id": document_id}) == segments
+            assert connection.scalar(text("SELECT source_location FROM document_chunks WHERE id = :id"), {"id": chunk_id}) == source
             record = connection.execute(text("SELECT id, visibility, course_id, extracted_text FROM documents WHERE id = :id"), {"id": document_id}).one()
             assert record.id == document_id and record.visibility == "private" and record.course_id is None and record.extracted_text == "old"
             course_id, enrollment_id = uuid.uuid4(), uuid.uuid4()
@@ -59,10 +70,11 @@ def verify():
                     raise AssertionError("Database accepted an invalid enrollment or document")
             command.downgrade(config, "5e28aec281c2")
             assert connection.scalar(text("SELECT extracted_text FROM documents WHERE id = :id"), {"id": document_id}) == "old"
+            assert connection.scalar(text("SELECT content FROM document_chunks WHERE id = :id"), {"id": chunk_id}) == "old"
             assert "courses" not in inspect(connection).get_table_names(schema=schema)
             command.upgrade(config, "head")
             assert connection.scalar(text("SELECT visibility FROM documents WHERE id = :id"), {"id": document_id}) == "private"
-            print("PostgreSQL migration upgrade/downgrade/re-upgrade, legacy document preservation, and constraints: passed")
+            print("PostgreSQL migrations, legacy document/chunk preservation, source JSON round trips, and constraints: passed")
         finally:
             transaction.rollback()
             print("Temporary migration schema rolled back; development records unchanged")
