@@ -3,6 +3,7 @@ import re
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from app.core.concurrency import generation_slots, slot
 from app.models.chunk import DocumentChunk
 from app.models.document import Document
 from app.models.user import User
@@ -45,9 +46,10 @@ def answer(db: Session, request: ChatRequest, user: User) -> ChatResponse:
         raise HTTPException(status_code=400, detail="Retrieved passages exceed the answer context limit; reprocess the document")
     source_map = {f"S{index}": source for index, source in enumerate(chosen, 1)}
     validate_current_sources(db, user, chosen)
-    raw = llm_service.generate_answer(request.query, [
-        {"source_id": key, "text": source.text} for key, source in source_map.items()
-    ])
+    with slot(generation_slots, "The assistant is answering other questions; please try again in a moment"):
+        raw = llm_service.generate_answer(request.query, [
+            {"source_id": key, "text": source.text} for key, source in source_map.items()
+        ])
     # Do not return a previously authorised passage after revocation or reprocessing.
     validate_current_sources(db, user, chosen)
     try:

@@ -75,14 +75,34 @@ function renderCourses() {
     const card = node('article', 'document-card'); const joined = state.mine.some((c) => c.id === course.id); const instructor = course.instructor_id === state.user.id;
     const top = node('div', 'card-top'); top.append(node('span', 'file-icon', 'COURSE'), node('span', 'badge', instructor ? 'Teaching' : joined ? 'Enrolled' : 'Available'));
     card.append(top, node('p', 'card-meta', course.code), node('h3', '', course.title)); if (course.description) card.append(node('p', 'small muted', course.description));
+    if (course.join_code) card.append(node('span', 'join-code', `Join code · ${course.join_code}`));
     const actions = node('div', 'card-actions');
+    if (course.join_code) actions.append(control('Students', () => openRoster(course)), control('New code', async () => {
+      if (!window.confirm('Issue a new join code? The current code will stop working; enrolled students keep access.')) return;
+      await api(`/courses/${course.id}/join-code`, { method: 'POST' }); await loadCourses(); notify('A new join code is ready.');
+    }, 'text-button'));
     if (joined) actions.append(control('View materials', () => { $('library-filter').value = course.id; navigate('library'); return loadDocuments(); }));
     if (state.user.role === 'STUDENT') actions.append(control(joined ? 'Leave course' : 'Join course', async () => {
-      if (joined && !window.confirm('Leave this course? You will lose access to its published materials. Your private notes will remain available.')) return;
-      await api(`/courses/${course.id}/enroll`, { method: joined ? 'DELETE' : 'POST' }); await loadMine(); renderCourses(); await loadDocuments(); notify(joined ? 'You have left the course.' : 'Course joined. Its published materials are now in your library.');
+      if (!joined) { openJoin(course); return; }
+      if (!window.confirm('Leave this course? You will lose access to its published materials. Your private notes will remain available.')) return;
+      await api(`/courses/${course.id}/enroll`, { method: 'DELETE' }); await loadMine(); renderCourses(); await loadDocuments(); notify('You have left the course.');
     }, joined ? 'text-button' : 'button primary compact'));
     card.append(actions); root.append(card);
   });
+}
+let joining = null;
+function openJoin(course) { joining = course; $('join-title').textContent = `Join ${course.code}`; $('join-form').reset(); error('join-error'); $('join-dialog').showModal(); }
+async function openRoster(course) {
+  $('roster-title').textContent = `${course.code} students`; error('roster-error'); $('roster').replaceChildren(node('p', 'muted', 'Loading students…')); if (!$('roster-dialog').open) $('roster-dialog').showModal();
+  try {
+    const students = await api(`/courses/${course.id}/students`); const root = $('roster'); root.replaceChildren();
+    if (!students.length) { root.append(node('p', 'muted', 'No students yet. Share the join code with your class.')); return; }
+    students.forEach((s) => {
+      const row = node('div', 'roster-row'); const who = node('div'); who.append(node('strong', '', s.full_name), node('p', 'muted', s.email));
+      row.append(who, control('Remove', async () => { if (!window.confirm(`Remove ${s.full_name} from ${course.code}? They lose access to its shared materials.`)) return; await api(`/courses/${course.id}/students/${s.user_id}`, { method: 'DELETE' }); await openRoster(course); }, 'text-button danger'));
+      root.append(row);
+    });
+  } catch (e) { if (!e.cancelled) error('roster-error', e.message); }
 }
 function empty(title, description) { const box = node('div', 'empty'); box.append(node('span', '', '▤'), node('h2', '', title), node('p', '', description)); return box; }
 function downloadControl(id, name) {
@@ -130,6 +150,7 @@ function renderDocuments() {
     actions.append(downloadControl(document.id, document.original_filename));
     if (owned) {
       const b = control(document.processing_status === 'failed' ? 'Retry processing' : document.processing_status === 'embedded' ? 'Process again' : 'Process material', () => queueDocument(document.id)); b.dataset.action = 'process'; b.disabled = active(job) || state.pending.has(document.id); actions.append(b);
+      const d = control('Delete', () => deleteDocument(document), 'text-button danger'); d.dataset.action = 'delete'; d.disabled = active(job); actions.append(d);
     }
     if (['extracted', 'chunked', 'embedded'].includes(document.processing_status)) { const b = control('Read passages ↗', () => readDocument(document), 'text-button'); b.dataset.action = 'read'; actions.append(b); }
     card.append(actions);
@@ -137,6 +158,10 @@ function renderDocuments() {
     root.append(card);
   });
   if (focusId && focusAction) root.querySelector(`[data-document-id="${CSS.escape(focusId)}"] [data-action="${CSS.escape(focusAction)}"]`)?.focus({ preventScroll: true });
+}
+async function deleteDocument(document) {
+  if (!window.confirm(`Delete “${document.original_filename}”? Its passages and the original file are removed permanently.`)) return;
+  await api(`/documents/${encodeURIComponent(document.id)}`, { method: 'DELETE' }); state.jobs.delete(document.id); await loadDocuments(); notify('Material deleted.');
 }
 async function queueDocument(id) {
   if (state.pending.has(id)) return; state.pending.add(id); renderDocuments();
@@ -195,7 +220,16 @@ $('auth-form').addEventListener('submit', (event) => { event.preventDefault(); b
   if (state.register) { if (new TextEncoder().encode(data.password).length > 72) throw new Error('This password is too long. Use fewer characters.'); await api('/auth/register', { method: 'POST', body: JSON.stringify({ ...data, full_name: $('full-name').value.trim() }) }); }
   const token = await api('/auth/login', { method: 'POST', body: JSON.stringify(data) }); state.token = token.access_token; try { sessionStorage.setItem(tokenKey, state.token); } catch { /* Continue with this page's in-memory session. */ } $('password').value = ''; await enterWorkspace(await api('/users/me'));
 }, 'auth-error'); });
-$('logout').addEventListener('click', () => logout());
+$('logout').addEventListener('click', async () => {
+  // Revoke the token on the server too; sign out locally even if that request fails.
+  try { if (state.token) await api('/auth/logout', { method: 'POST' }); } catch { /* Local sign-out still proceeds. */ }
+  logout();
+});
+$('join-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('join-submit'), async () => {
+  const course = joining; if (!course) return;
+  await api(`/courses/${course.id}/enroll`, { method: 'POST', body: JSON.stringify({ join_code: $('join-code').value.trim() }) });
+  $('join-dialog').close(); await loadMine(); renderCourses(); await loadDocuments(); notify('Course joined. Its published materials are now in your library.');
+}, 'join-error'); });
 document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => navigate(b.dataset.view)));
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => $(b.dataset.close).close()));
 $('go-assistant').addEventListener('click', () => { navigate('assistant'); $('question').focus(); }); $('open-upload').addEventListener('click', openUpload);

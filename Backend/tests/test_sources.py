@@ -152,7 +152,13 @@ class SourceAPITests(APITestCase):
         blank_pdf.add_blank_page(width=100, height=100)
         data = io.BytesIO()
         blank_pdf.write(data)
-        for filename, content in [("blank.pdf", data.getvalue()), ("corrupt.pdf", b"not pdf"), ("bad.txt", b"\xff\xfe\x80"), ("blank.txt", b" \n\n ")]:
+        # Content that does not match its declared type is rejected at upload.
+        for filename, content in [("corrupt.pdf", b"not pdf"), ("bad.txt", b"\xff\xfe\x80"), ("fake.docx", b"PK not a zip")]:
+            rejected = await self.client.post("/documents/upload", headers=self.headers(), files={"file": (filename, content)})
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertNotIn(str(self.upload_dir), rejected.text)
+        self.assertEqual(list(self.upload_dir.iterdir()), [])
+        for filename, content in [("blank.pdf", data.getvalue()), ("blank.txt", b" \n\n ")]:
             uploaded = await self.client.post("/documents/upload", headers=self.headers(), files={"file": (filename, content)})
             with self.assertLogs("app.services.extraction_service", level="ERROR"):
                 extracted = await self.client.post(f"/documents/{uploaded.json()['id']}/extract", headers=self.headers())

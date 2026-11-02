@@ -1,9 +1,10 @@
 import uuid
 from typing import Literal
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from database.connection import get_db
+from app.core.rate_limit import limit_by_user
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.document import Document
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
 @router.post("/{document_id}/process", response_model=ProcessingJobResponse, status_code=202)
-def process(document_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def process(document_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(limit_by_user("process", 30, 3600))):
     return processing_service.enqueue(db, document_id, current_user)
 
 
@@ -100,9 +101,15 @@ def upload(
     course_id: uuid.UUID | None = Form(None),
     visibility: Literal["private", "course"] = Form("private"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(limit_by_user("upload", 30, 3600)),
 ):
     return document_service.upload_document(db, file, current_user, course_id, visibility)
+
+
+@router.delete("/{document_id}", status_code=204)
+def delete(document_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    document_service.delete_document(db, document_id, current_user)
+    return Response(status_code=204)
 
 
 @router.post("/{document_id}/extract", response_model=DocumentResponse)

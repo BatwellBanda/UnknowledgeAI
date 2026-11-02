@@ -52,7 +52,7 @@ def verify():
             record = connection.execute(text("SELECT id, visibility, course_id, extracted_text FROM documents WHERE id = :id"), {"id": document_id}).one()
             assert record.id == document_id and record.visibility == "private" and record.course_id is None and record.extracted_text == "old"
             course_id, enrollment_id = uuid.uuid4(), uuid.uuid4()
-            connection.execute(text("INSERT INTO courses (id, code, title, instructor_id) VALUES (:id, 'TEST101', 'Test course', :instructor)"), {"id": course_id, "instructor": user_id})
+            connection.execute(text("INSERT INTO courses (id, code, title, instructor_id, join_code) VALUES (:id, 'TEST101', 'Test course', :instructor, 'TESTCODE')"), {"id": course_id, "instructor": user_id})
             connection.execute(text("INSERT INTO enrollments (id, course_id, user_id) VALUES (:id, :course, :user)"), {"id": enrollment_id, "course": course_id, "user": user_id})
             violations = [
                 ("INSERT INTO enrollments (id, course_id, user_id) VALUES (:id, :course, :user)", {"id": uuid.uuid4(), "course": course_id, "user": user_id}),

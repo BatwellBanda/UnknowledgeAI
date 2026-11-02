@@ -3,6 +3,7 @@ import numpy as np
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from app.core.concurrency import embedding_slots, slot
 from app.models.chunk import DocumentChunk
 from app.models.document import Document
 from app.models.user import User
@@ -18,7 +19,8 @@ def query_embedding(query: str):
         # Reject overlong questions rather than silently losing their ending.
         if len(model.tokenizer.encode(query, add_special_tokens=True)) > model.max_seq_length:
             raise HTTPException(status_code=400, detail="Search question exceeds the embedding model's token limit; shorten it")
-        vector = np.asarray(model.encode([query], show_progress_bar=False)[0], dtype=np.float32)
+        with slot(embedding_slots, "Search is busy right now; please try again in a moment"):
+            vector = np.asarray(model.encode([query], show_progress_bar=False)[0], dtype=np.float32)
         if vector.shape != (384,) or not np.isfinite(vector).all() or np.linalg.norm(vector) == 0:
             raise ValueError("Invalid query embedding")
         return vector

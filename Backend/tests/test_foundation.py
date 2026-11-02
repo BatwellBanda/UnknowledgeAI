@@ -8,16 +8,20 @@ from unittest.mock import Mock, patch
 # Set these before importing app settings or the engine. Never load a real DB URL.
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["SECRET_KEY"] = "foundation-tests-only-secret-not-for-deployment"
+# Parse in-process for speed; test_hardening covers the isolated child process.
+os.environ["EXTRACTION_TIMEOUT_SECONDS"] = "0"
 
+import logging
 import bcrypt
 import httpx
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 from sqlalchemy import create_engine, select, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.security import (
     ALGORITHM, create_access_token, hash_password, require_role, verify_password,
 )
@@ -33,6 +37,8 @@ from app.services.auth_service import register_user
 from database.connection import Base, get_db
 
 PASSWORD = "a long test passphrase"
+for noisy in ["uniknowledge.access", "httpx"]:
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 class PasswordTests(unittest.TestCase):
@@ -66,6 +72,7 @@ class APITestCase(unittest.IsolatedAsyncioTestCase):
         cls.fixture_hash = hash_password(PASSWORD)
 
     def setUp(self):
+        limiter.reset()
         self.engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
         )

@@ -20,7 +20,7 @@ Edit `.env` with your database URL and a random signing secret. Generate the sec
 .\venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Do not commit `.env`. Settings load `Backend/.env` regardless of the importing process's working directory; environment variables override file values. Upload storage still depends on starting the server from `Backend`.
+Do not commit `.env`. Settings load `Backend/.env` regardless of the importing process's working directory; environment variables override file values. Uploads are stored in `Backend/uploads` (override with `UPLOAD_DIR`) wherever the server is started from. `SECRET_KEY` must be at least 32 characters; the app refuses to start otherwise. Changing it signs every user out.
 
 ### PostgreSQL prerequisite
 
@@ -57,7 +57,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/ready
 ```
 
-`/health` checks process liveness. `/ready` executes a database query and returns 200 when the connection works, or 503 with a generic response when it fails. It does not verify migration state, worker availability, embedding models, or Ollama. Database connection timeouts follow the configured driver; this is not a fixed-duration probe.
+`/health` checks process liveness and answers even while every request thread is busy. `/ready` executes a database query and returns 200 when the connection works, or 503 with a generic response when it fails. Its `processing` field reports `queued_jobs` and `oldest_wait_seconds`; a wait that keeps growing means no worker is running. It does not verify migration state, embedding models, or Ollama. Database connection timeouts follow the configured driver; this is not a fixed-duration probe.
 
 ## Student interface
 
@@ -78,18 +78,25 @@ Verification: `/app/`, JS, and CSS return 200 on the existing local server; 92 r
 | Method | Path | Behaviour |
 | --- | --- | --- |
 | POST | `/auth/register` | Creates a STUDENT. Omit role or supply STUDENT, case-insensitively; other roles return 422. |
-| POST | `/auth/login` | Returns a 60-minute bearer token. |
+| POST | `/auth/login` | Returns a bearer token (60 minutes by default, `ACCESS_TOKEN_EXPIRE_MINUTES`). |
+| POST | `/auth/logout` | Revokes every token issued to the account, on all devices. |
+| POST | `/auth/change-password` | Requires `current_password`; revokes older tokens and returns a new one. |
+| PATCH | `/users/{id}/role` | ADMIN only: sets `STUDENT`, `LECTURER` or `ADMIN`. Admins cannot change their own role. |
 | GET | `/users/me` | Returns the authenticated user's profile and current database role. |
-| GET | `/courses` | Authenticated course catalog; `mine=true` limits to taught/enrolled courses. |
+| GET | `/courses` | Authenticated course catalog; `mine=true` limits to taught/enrolled courses. `join_code` is shown only to the course instructor or an admin, otherwise null. |
 | POST | `/courses` | Lecturer/admin creates a course and becomes its assigned instructor. |
 | GET | `/courses/{id}` | Authenticated course metadata. |
-| POST | `/courses/{id}/enroll` | Student self-enrolment; repeating it returns the same enrolment. |
+| POST | `/courses/{id}/enroll` | Student enrolment with body `{"join_code": "..."}` (case-insensitive); a wrong code returns 403. Repeating it returns the same enrolment. |
+| POST | `/courses/{id}/join-code` | Instructor/admin issues a new code; the old one stops working, existing enrolments stay. |
+| GET | `/courses/{id}/students` | Instructor/admin lists enrolled students. |
+| DELETE | `/courses/{id}/students/{user_id}` | Instructor/admin removes a student, revoking shared access. |
 | DELETE | `/courses/{id}/enroll` | Student removes their own enrolment and loses shared access. |
 | GET | `/documents?offset=0&limit=20` | Lists owned documents and authorised shared material, with limit 1-100; optional `course_id` filter. |
 | GET | `/documents/{id}` | Returns readable metadata; inaccessible documents return 404. |
 | GET | `/documents/{id}/text` | Reads authorised extracted text; returns 400 if extraction is unavailable. |
 | GET | `/documents/{id}/download` | Downloads the authorised original file as an attachment; inaccessible documents or missing files return 404. |
 | GET | `/documents/{id}/chunks` | Reads authorised chunks and source locations; supports `offset` and `limit` (1-100). |
+| DELETE | `/documents/{id}` | Owner deletes the document, its passages, jobs and stored file; 409 while processing. |
 | POST | `/documents/upload` | Accepts supported extensions, up to 20 MB. |
 | POST | `/documents/{id}/extract` | Extracts text; requires ownership. |
 | POST | `/documents/{id}/chunk` | Creates chunks; requires ownership. |
@@ -308,8 +315,33 @@ References: [Ollama chat API](https://docs.ollama.com/api/chat), [structured JSO
 
 For repeatable measured retrieval, run `venv\Scripts\python.exe scripts/evaluate_retrieval.py` from `Backend`. See [the evaluation guide](../Docs/RETRIEVAL_EVALUATION.md) for metrics, the initial synthetic development baseline, and preparing separate real-course development/held-out sets. Reports are saved under ignored `tmp/evaluation/` and the temporary database schema is rolled back.
 
-- Document deletion, embedded original-file viewers, runtime/model installation, and real-model answer evaluation remain unfinished.
-- `/ready` checks database connectivity; migration, worker, and model readiness remain separate checks.
-- Rate limiting, password reset, privileged provisioning, and production CORS configuration remain future work.
+- Embedded original-file viewers, runtime/model installation, and real-model answer evaluation remain unfinished.
+- `/ready` checks database connectivity and the processing backlog; migration and model readiness remain separate checks.
+- Rate-limit counters are kept in the API process's memory. Run a single API process, or move them to Redis before scaling out.
+- Email-based password reset and account deletion remain future work; an operator can reset a password with `scripts/create_user.py --reset-password`.
+
+## Production safeguards
+
+- **Course access:** each course has an 8-character join code that only its instructor and admins can see. Students need it to enrol; instructors can issue a new code and remove students.
+- **Rate limits** (HTTP 429 with `Retry-After`): login 10 attempts per account and address per 15 minutes, plus 120 per address per minute; registration 30 per address per hour; chat 10 and search 60 per user per minute; uploads 30 and processing requests 30 per user per hour; enrolment attempts 10 per user per minute. Per-address limits are generous because a campus network can share one public address. Set `TRUST_PROXY_HEADERS=true` only behind a reverse proxy that sets `X-Forwarded-For`.
+- **Bounded model work:** at most `MAX_CONCURRENT_GENERATIONS` answers (default 2) and `MAX_CONCURRENT_EMBEDDINGS` search embeddings (default 4) run at once. Extra requests wait up to `BUSY_WAIT_SECONDS`, then get 503, so slow model calls cannot occupy every request thread.
+- **Upload safety:** file contents must match the extension (PDF header, real Word/PowerPoint archive, UTF-8 text without binary data). Office archives are limited to 300 MB expanded size and a 200× compression ratio; PDFs to 2000 pages. Parsing runs in a child process that is killed after `EXTRACTION_TIMEOUT_SECONDS` (default 120), so a hostile file cannot stall the worker.
+- **Storage:** each user may store up to `MAX_USER_STORAGE_MB` (default 500); further uploads return 413.
+- **Sessions:** logout and password changes revoke all of the account's tokens on the server. Unknown-email logins take as long as wrong passwords.
+- **HTTP headers:** a strict Content-Security-Policy (relaxed only for `/docs`), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, and HSTS over HTTPS. Every response carries `X-Request-ID`, which also appears in the access log; logs include paths but not query strings or bodies.
+
+### Lecturer and admin accounts
+
+Public registration only creates students. From `Backend`, create or promote privileged accounts with:
+
+```powershell
+.\venv\Scripts\python.exe -m scripts.create_user --email lecturer@example.ac --name "Lecturer Name" --role LECTURER
+```
+
+The password is entered at a prompt, never on the command line. For an existing email, the command changes the role and signs the account out everywhere. After that, an admin can change roles through `PATCH /users/{id}/role`.
+
+### Deploying
+
+Serve the API behind HTTPS, for example with a reverse proxy, and run it as one process (`uvicorn app.main:app --host 127.0.0.1 --port 8000`), plus one or more `python -m app.worker` processes. Workers coordinate through PostgreSQL locks, so you can add more for throughput.
 
 References: [bcrypt password-length behaviour](https://github.com/pyca/bcrypt#maximum-password-length), [embedding model](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), and [pgvector](https://github.com/pgvector/pgvector).

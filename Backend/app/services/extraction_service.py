@@ -1,80 +1,38 @@
 import logging
+import multiprocessing
 import os
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from docx import Document as DocxDocument
-from docx.text.paragraph import Paragraph
-from pypdf import PdfReader
+from app.core.config import settings
 from app.models.document import Document
 from app.models.chunk import DocumentChunk
 from app.models.user import User
+from app.services import extractors
+from app.services.extractors import EXTRACTORS
 
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = str(settings.UPLOAD_DIR)
 logger = logging.getLogger(__name__)
 
 
-def _extract_docx_text(file_path: str) -> list[dict]:
-    segments = []
-    section = None
-    paragraph_index = table_index = 0
-    for block in DocxDocument(file_path).iter_inner_content():
-        if isinstance(block, Paragraph):
-            paragraph_index += 1
-            text = block.text
-            if block.style and block.style.name.startswith("Heading") and text.strip():
-                section = text.strip()
-            location = {"kind": "docx_paragraph", "paragraph": paragraph_index, "section": section}
-        else:
-            table_index += 1
-            text = "\n".join(" | ".join(cell.text for cell in row.cells) for row in block.rows)
-            location = {"kind": "docx_table", "table": table_index, "section": section}
-        if text.strip():
-            segments.append({"text": text, "location": location})
-    return segments
+class ExtractionTimeout(Exception):
+    pass
 
 
-def _extract_pdf_text(file_path: str) -> list[dict]:
-    return [
-        {"text": text, "location": {"kind": "pdf_page", "page": index}}
-        for index, page in enumerate(PdfReader(file_path).pages, 1)
-        if (text := page.extract_text()) and text.strip()
-    ]
-
-
-def _slide_shape_text(shape) -> list[str]:
-    if hasattr(shape, "shapes"):
-        return [text for child in shape.shapes for text in _slide_shape_text(child)]
-    if shape.has_table:
-        return [" | ".join(cell.text for cell in row.cells) for row in shape.table.rows]
-    if shape.has_text_frame:
-        return [shape.text]
-    return []
-
-
-def _extract_pptx_text(file_path: str) -> list[dict]:
-    from pptx import Presentation
-
-    segments = []
-    for index, slide in enumerate(Presentation(file_path).slides, 1):
-        text = "\n".join(text for shape in slide.shapes for text in _slide_shape_text(shape) if text.strip())
-        if text.strip():
-            segments.append({"text": text, "location": {"kind": "pptx_slide", "slide": index}})
-    return segments
-
-
-def _extract_txt_text(file_path: str) -> list[dict]:
-    with open(file_path, "r", encoding="utf-8-sig") as file:
-        text = file.read()
-    return [{"text": text, "location": {"kind": "txt_lines", "line_start": 1, "line_end": max(1, len(text.splitlines()))}}] if text.strip() else []
-
-
-EXTRACTORS = {
-    "docx": _extract_docx_text,
-    "pdf": _extract_pdf_text,
-    "pptx": _extract_pptx_text,
-    "txt": _extract_txt_text,
-}
+def run_extractor(file_type: str, file_path: str) -> list[dict]:
+    """Parse in a disposable child process so a hostile file cannot hang the worker."""
+    extractor = EXTRACTORS[file_type]
+    timeout = settings.EXTRACTION_TIMEOUT_SECONDS
+    if not timeout or extractor is not extractors.EXTRACTORS_DEFAULTS.get(file_type):
+        # Isolation disabled, or a test double that cannot cross a process boundary.
+        return extractor(file_path)
+    with multiprocessing.get_context("spawn").Pool(1, maxtasksperchild=1) as pool:
+        pending = pool.apply_async(extractors.extract, (file_type, file_path))
+        try:
+            return pending.get(timeout)
+        except multiprocessing.TimeoutError:
+            raise ExtractionTimeout(f"Extraction exceeded {timeout} seconds")
+        # Leaving the block terminates the child, including a hung parser.
 
 
 def extract_document_text(db: Session, document_id, current_user: User) -> Document:
@@ -83,14 +41,13 @@ def extract_document_text(db: Session, document_id, current_user: User) -> Docum
         raise HTTPException(status_code=404, detail="Document not found")
     if document.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this document")
-    extractor = EXTRACTORS.get(document.file_type)
-    if not extractor:
+    if document.file_type not in EXTRACTORS:
         raise HTTPException(status_code=400, detail="No text extractor available for this file type")
 
     try:
         document.processing_status = "extracting"
         db.commit()
-        segments = extractor(os.path.join(UPLOAD_DIR, document.stored_filename))
+        segments = run_extractor(document.file_type, os.path.join(UPLOAD_DIR, document.stored_filename))
         if not segments or not any(segment["text"].strip() for segment in segments):
             raise ValueError("No readable text")
         # Re-extraction replaces old chunks and vectors atomically with the new text.
@@ -104,13 +61,16 @@ def extract_document_text(db: Session, document_id, current_user: User) -> Docum
         db.rollback()
         logger.exception("Database error while extracting document %s", document_id)
         raise HTTPException(status_code=500, detail="Document processing could not be saved")
-    except Exception:
+    except Exception as error:
         db.rollback()
         logger.exception("Text extraction failed for document %s", document_id)
         document.processing_status = "failed"
         db.commit()
-        raise HTTPException(
-            status_code=422,
-            detail="Could not extract readable text. Check the file format and encoding; scanned PDFs require OCR.",
-        )
+        if isinstance(error, ExtractionTimeout):
+            detail = "The document took too long to read. It may be damaged or too complex; try a simpler export."
+        elif isinstance(error, extractors.UnsafeFileError):
+            detail = f"{error}."
+        else:
+            detail = "Could not extract readable text. Check the file format and encoding; scanned PDFs require OCR."
+        raise HTTPException(status_code=422, detail=detail)
     return document

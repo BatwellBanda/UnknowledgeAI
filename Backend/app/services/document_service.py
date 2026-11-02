@@ -1,17 +1,23 @@
+import logging
 import os
+import shutil
 import uuid
 from pathlib import Path
 from fastapi import UploadFile, HTTPException, status
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from app.core.config import settings
+from app.models.chunk import DocumentChunk
 from app.models.document import Document
 from app.models.user import User
 from app.services.course_service import accessible_course_ids, require_course_membership
+from app.services.extractors import UnsafeFileError, inspect_upload
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt"}
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = str(settings.UPLOAD_DIR)
+logger = logging.getLogger(__name__)
 
 
 def readable_documents(db: Session, user: User):
@@ -73,12 +79,24 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
             detail="File too large. Maximum allowed size is 20 MB.",
         )
 
+    used = db.query(func.coalesce(func.sum(Document.file_size_bytes), 0)).filter(Document.owner_id == owner.id).scalar()
+    if used + file_size > settings.MAX_USER_STORAGE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Storage limit of {settings.MAX_USER_STORAGE_MB} MB reached; delete materials you no longer need",
+        )
+
+    try:
+        inspect_upload(file.file, ext.lstrip("."))
+    except UnsafeFileError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{error}.")
+
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     stored_filename = f"{uuid.uuid4()}{ext}"
     stored_path = os.path.join(UPLOAD_DIR, stored_filename)
 
     with open(stored_path, "wb") as buffer:
-        buffer.write(file.file.read())
+        shutil.copyfileobj(file.file, buffer, 1024 * 1024)
 
     new_document = Document(
         owner_id=owner.id,
@@ -99,3 +117,31 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
         raise
     db.refresh(new_document)
     return new_document
+
+
+def delete_document(db: Session, document_id, user: User) -> None:
+    """Owner-only removal of the record, its chunks, jobs and the stored file."""
+    from app.services.processing_service import active_job, document_lock
+
+    document = db.query(Document).filter(Document.id == document_id, Document.owner_id == user.id).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    with document_lock(db.get_bind(), document.id) as acquired:
+        if not acquired or active_job(db, document.id):
+            raise HTTPException(status_code=409, detail="This document is being processed; try again when it finishes")
+        stored_filename = document.stored_filename
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+        db.delete(document)
+        try:
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise
+    # Remove the file only after the database no longer references it.
+    root = Path(UPLOAD_DIR).resolve()
+    path = (root / stored_filename).resolve()
+    if path.is_relative_to(root):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove stored file for deleted document %s", document_id)
