@@ -157,6 +157,37 @@ Token-budget batch, 16 October 2026: production chunking now checks the actual e
 
 Retrieval evaluation batch, 16 October 2026: added a repeatable evaluator that runs real TXT upload/extract/chunk/embed/search with the cached model and PostgreSQL in an isolated rolled-back schema. A validated, explicitly synthetic development dataset contains 9 documents, 18 answerable questions, and 3 unanswerable probes. Initial results: hit rate at 1 is 17/18 (94.4%), hit rate at 5 is 18/18 (100%), and MRR at 5 is 0.9583. The port-number question ranks fourth and remains an explicit case for future comparison. Reports record individual source passages, timings, dataset/model/implementation metadata, and failures. All 111 regression tests pass, including known-value scoring and invalid-label checks. This is evaluator-development evidence, not held-out course-corpus accuracy. Unanswerable retrievals are recorded without an invented abstention score; real-model generation evaluation remains pending. See [the evaluation guide](RETRIEVAL_EVALUATION.md) for preparing real course sets and repeatable commands.
 
+
+Hardening batch, November 2026: added the following.
+- Instructor-issued course join codes, with roster management and student removal.
+- Per-account and per-address rate limits.
+- Bounded concurrent generation and query embedding.
+- Upload content checks: ZIP-bomb and PDF page limits, and parsing in a child process that is killed on timeout.
+- Document deletion and per-user storage quotas.
+- Server-side token revocation; a 32+ character secret key; equalised login timing.
+- Admin role provisioning, security headers, request IDs and the processing backlog in `/ready`.
+
+All 125 regression tests then passed. Rate-limit counters remain in process memory.
+
+Milestone 5 batch, 25 November 2026: adaptive learning is implemented end to end (see the [backend README](../Backend/README.md#practice-mastery-and-study-plans)).
+- **Topics:** instructors define each course's topics.
+- **Questions:** every multiple-choice question is tied to a document passage and an exact supporting quote. Students and instructors write them from search results, or draft them with the local model; drafts are kept only with four distinct options and a word-for-word quote. Instructors publish reviewed questions to the class. Visibility follows current read access to the source document. Reprocessing re-anchors questions by their quote, and deleting a source removes its questions while past grades remain.
+- **Quizzes:** answer keys stay hidden until submission. Each attempt keeps a copy of every question as asked. Previously missed questions are asked again first.
+- **Mastery:** a recency-weighted score (14-day half-life, latest 20 answers), reported as not enough evidence below 4 answers, otherwise weak / developing / strong.
+- **Planner:** deterministic. It respects per-weekday availability, the exam-date horizon and self-rated difficulty. It interleaves topics, reschedules missed sessions once, avoids double-counting weak topics, and gives every session a plain-language reason. It rebuilds after each quiz.
+- **Student app:** a Practice & plan view, a quiz dialog with source links, and a question editor launched from search results.
+
+Evidence:
+- **Regression tests:** all 162 pass. The 37 new tests cover topic and question permissions, exact-quote validation, publishing rules, answer-key hiding, grading, double-submission, revocation, re-anchoring, deletion cascades, mocked generation, mastery levels and recency, and planner profiles (availability, interleaving, explanations, exam horizon, missed-session rescheduling, difficulty, determinism). They also cover a plan changing after a new quiz result.
+- **PostgreSQL:** `tests/verify_learning_postgres.py` passes in a rolled-back schema. It checks the models against the migration, the API practice loop, SET NULL/cascade behaviour, constraints, and downgrade/re-upgrade.
+- **Browser:** for the first time, the student app was driven in headless Microsoft Edge (Playwright) against an isolated, since-dropped schema with real processing and embeddings. Covered: the lecturer writes and publishes questions; the student quizzes, opens sources, sees mastery change to "needs work", sets availability, exam date and difficulty, and marks a session done. The 390-pixel phone layout has no horizontal overflow, and no page errors occurred. This check found and fixed a quiz-result contrast problem, and right/wrong answers are now also labelled in text.
+- **Deployment:** migration `f5c8a2d91b37` has not been applied to the development database.
+
+Limits:
+- AI drafting remains untested against a real model because Ollama is still not installed. Drafts need human review: the automated checks confirm structure and quotation, not distractor quality.
+- Planner tests validate behaviour on controlled profiles, not learning gains.
+- Topic deletion and planning around specific class times (rather than minutes per weekday) are future work.
+
 This batch supports the existing architecture. A backend rewrite is not justified by the reviewed code.
 
 ## Technical references checked

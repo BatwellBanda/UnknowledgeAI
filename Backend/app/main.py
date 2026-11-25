@@ -12,6 +12,7 @@ from app.routes import courses
 from app.routes import search
 from app.routes import chat
 from app.routes import health
+from app.routes import learning
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 access_log = logging.getLogger("uniknowledge.access")
@@ -59,6 +60,8 @@ app.include_router(courses.router)
 app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(health.router)
+for learning_router in (learning.topics, learning.questions, learning.quizzes, learning.plans):
+    app.include_router(learning_router)
 
 frontend_directory = Path(__file__).resolve().parents[2] / "Frontend" / "dist"
 if frontend_directory.is_dir():
