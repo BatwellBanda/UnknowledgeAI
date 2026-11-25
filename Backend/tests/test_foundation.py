@@ -8,22 +8,28 @@ from unittest.mock import Mock, patch
 # Set these before importing app settings or the engine. Never load a real DB URL.
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["SECRET_KEY"] = "foundation-tests-only-secret-not-for-deployment"
+# Parse in-process for speed; test_hardening covers the isolated child process.
+os.environ["EXTRACTION_TIMEOUT_SECONDS"] = "0"
 
+import logging
 import bcrypt
 import httpx
 from fastapi import HTTPException
-from jose import jwt
+import jwt
 from sqlalchemy import create_engine, select, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.security import (
     ALGORITHM, create_access_token, hash_password, require_role, verify_password,
 )
 from app.main import app
 from app.models.document import Document
 from app.models.course import Course, Enrollment
+from app.models.chunk import DocumentChunk
+from app.models.processing_job import ProcessingJob
 from app.models.role import Role
 from app.models.user import User
 from app.schemas.user import UserRegister
@@ -31,6 +37,8 @@ from app.services.auth_service import register_user
 from database.connection import Base, get_db
 
 PASSWORD = "a long test passphrase"
+for noisy in ["uniknowledge.access", "httpx"]:
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 class PasswordTests(unittest.TestCase):
@@ -64,6 +72,7 @@ class APITestCase(unittest.IsolatedAsyncioTestCase):
         cls.fixture_hash = hash_password(PASSWORD)
 
     def setUp(self):
+        limiter.reset()
         self.engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
         )
@@ -71,7 +80,7 @@ class APITestCase(unittest.IsolatedAsyncioTestCase):
         def enable_foreign_keys(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
 
-        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Course.__table__, Enrollment.__table__, Document.__table__])
+        Base.metadata.create_all(self.engine, tables=[Role.__table__, User.__table__, Course.__table__, Enrollment.__table__, Document.__table__, DocumentChunk.__table__, ProcessingJob.__table__])
         self.db = Session(self.engine)
         self.student_role = Role(name="STUDENT")
         self.db.add_all([self.student_role, Role(name="LECTURER"), Role(name="ADMIN")])

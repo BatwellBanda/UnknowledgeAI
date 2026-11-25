@@ -79,21 +79,22 @@ class CourseAPITests(APITestCase):
     async def test_enrollment_is_self_only_and_idempotent(self):
         # Extra query/body identities do not change the authenticated enrollment target.
         path = f"/courses/{self.course.id}/enroll?user_id={self.admin.id}"
-        first = await self.client.post(path, headers=self.headers(self.other), json={"user_id": str(self.admin.id)})
-        second = await self.client.post(path, headers=self.headers(self.other))
+        code = {"join_code": self.course.join_code.lower()}
+        first = await self.client.post(path, headers=self.headers(self.other), json={"user_id": str(self.admin.id), **code})
+        second = await self.client.post(path, headers=self.headers(self.other), json=code)
         self.assertEqual(first.status_code, 200, first.text)
         self.assertEqual(first.json()["user_id"], str(self.other.id))
         self.assertEqual(first.json()["id"], second.json()["id"])
         self.assertEqual(self.db.query(Enrollment).filter(Enrollment.user_id == self.other.id).count(), 1)
 
     async def test_lecturer_cannot_self_enroll(self):
-        response = await self.client.post(f"/courses/{self.course.id}/enroll", headers=self.headers(self.second_instructor))
+        response = await self.client.post(f"/courses/{self.course.id}/enroll", headers=self.headers(self.second_instructor), json={"join_code": self.course.join_code})
         self.assertEqual(response.status_code, 403)
 
     async def test_missing_course(self):
         unknown = uuid.uuid4()
         for method, path in [("GET", f"/courses/{unknown}"), ("POST", f"/courses/{unknown}/enroll")]:
-            response = await self.client.request(method, path, headers=self.headers())
+            response = await self.client.request(method, path, headers=self.headers(), json={"join_code": "ANYCODE1"})
             self.assertEqual(response.status_code, 404)
 
     async def test_enrolled_student_reads_only_published_material(self):

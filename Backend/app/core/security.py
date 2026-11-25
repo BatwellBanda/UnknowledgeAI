@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import uuid
 import bcrypt
-from jose import jwt, JWTError
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -9,9 +9,11 @@ from app.core.config import settings
 from database.connection import get_db
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 bearer_scheme = HTTPBearer(auto_error=False)
+# Checked when an email is unknown so login timing does not reveal registered accounts.
+_DUMMY_HASH = bcrypt.hashpw(b"timing-equaliser", bcrypt.gensalt()).decode("utf-8")
 
 
 def hash_password(password: str) -> str:
@@ -31,6 +33,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return bcrypt.checkpw(plain_bytes, hashed_bytes)
     except ValueError:
         return False
+
+
+def burn_password_check(plain_password: str) -> None:
+    verify_password(plain_password, _DUMMY_HASH)
 
 
 def create_access_token(data: dict) -> str:
@@ -54,17 +60,21 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[ALGORITHM],
-            options={"require_exp": True, "require_sub": True},
+            options={"require": ["exp", "sub"]},
         )
         subject = payload.get("sub")
         if not isinstance(subject, str):
             raise credentials_exception
         user_id = uuid.UUID(subject)
-    except (JWTError, ValueError, TypeError):
+        version = payload.get("ver", 0)
+        if not isinstance(version, int):
+            raise credentials_exception
+    except (jwt.PyJWTError, ValueError, TypeError):
         raise credentials_exception
 
     user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
+    # Logout and password changes bump token_version, revoking every earlier token.
+    if user is None or version != (user.token_version or 0):
         raise credentials_exception
     return user
 

@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.document import Document
 from app.models.chunk import DocumentChunk
 from app.models.course import Course, Enrollment
+from app.models.processing_job import ProcessingJob
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool

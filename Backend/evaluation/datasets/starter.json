@@ -1,0 +1,39 @@
+{
+  "version": "synthetic-development-v1",
+  "description": "Hand-written synthetic teaching examples for evaluator development. These are not university lecture notes or held-out assessment questions.",
+  "split": "development",
+  "materials": [
+    {"id": "net-addressing", "course": "Networking", "title": "IP addressing", "text": "IP addressing\nA subnet mask separates the network portion of an IP address from the host portion.\nA default gateway forwards packets destined for networks outside the local subnet."},
+    {"id": "net-dns", "course": "Networking", "title": "Domain names", "text": "Domain name resolution\nDNS translates domain names into IP addresses. A DNS cache stores recently resolved records until their time to live expires.\nAn authoritative DNS server provides records for a domain it is responsible for."},
+    {"id": "net-transport", "course": "Networking", "title": "Transport protocols", "text": "Transport protocols\nTCP provides reliable ordered delivery using acknowledgements and retransmission. UDP sends datagrams without guaranteeing delivery or ordering.\nA port number identifies an application endpoint on a host."},
+    {"id": "code-loops", "course": "Programming", "title": "Iteration", "text": "Iteration\nA for loop iterates over the items of a sequence. A while loop repeats while its condition remains true.\nA break statement exits the innermost loop immediately. A continue statement skips to the next iteration."},
+    {"id": "code-functions", "course": "Programming", "title": "Functions", "text": "Functions\nA parameter is a name in a function definition; an argument is a value supplied when the function is called.\nA return statement ends function execution and sends a result to the caller. A local variable is scoped to its function."},
+    {"id": "code-collections", "course": "Programming", "title": "Python collections", "text": "Python collections\nA Python list is a mutable ordered sequence. A tuple is an immutable sequence.\nA dictionary maps unique keys to values. A set contains distinct elements and can remove duplicates from an iterable."},
+    {"id": "db-keys", "course": "Databases", "title": "Relational keys", "text": "Relational keys\nA primary key uniquely identifies a row and cannot be null. A foreign key references a key in a related table to enforce referential integrity.\nA composite key uses two or more columns together to identify a row."},
+    {"id": "db-transactions", "course": "Databases", "title": "Transactions", "text": "Transactions\nAtomicity means a transaction's changes all succeed or none take effect. Durability means committed changes survive a system failure.\nA rollback discards uncommitted changes. Isolation controls how concurrent transactions observe one another's changes."},
+    {"id": "db-indexes", "course": "Databases", "title": "Indexes and normalisation", "text": "Indexes and normalisation\nAn index can accelerate lookups but consumes storage and adds work to inserts, updates, and deletes.\nNormalisation reduces duplicated facts and helps avoid insertion, update, and deletion anomalies."}
+  ],
+  "questions": [
+    {"id": "net-01", "query": "What tells a host which bits of its IP address identify the network?", "course": "Networking", "evidence": [{"document": "net-addressing", "quote": "A subnet mask separates the network portion of an IP address from the host portion."}]},
+    {"id": "net-02", "query": "Where does a computer send a packet intended for a different subnet?", "evidence": [{"document": "net-addressing", "quote": "A default gateway forwards packets destined for networks outside the local subnet."}]},
+    {"id": "net-03", "query": "Which service converts a website name into a numerical network address?", "course": "Networking", "evidence": [{"document": "net-dns", "quote": "DNS translates domain names into IP addresses."}]},
+    {"id": "net-04", "query": "Why can a cached domain record stop being usable after some time?", "evidence": [{"document": "net-dns", "quote": "A DNS cache stores recently resolved records until their time to live expires."}]},
+    {"id": "net-05", "query": "How does TCP recover missing data and deliver it in order?", "course": "Networking", "evidence": [{"document": "net-transport", "quote": "TCP provides reliable ordered delivery using acknowledgements and retransmission."}]},
+    {"id": "net-06", "query": "Which identifier distinguishes applications running on the same host?", "evidence": [{"document": "net-transport", "quote": "A port number identifies an application endpoint on a host."}]},
+    {"id": "code-01", "query": "Which loop is suitable for visiting each element in a sequence?", "course": "Programming", "evidence": [{"document": "code-loops", "quote": "A for loop iterates over the items of a sequence."}]},
+    {"id": "code-02", "query": "How can I skip the rest of one loop iteration and start the next?", "evidence": [{"document": "code-loops", "quote": "A continue statement skips to the next iteration."}]},
+    {"id": "code-03", "query": "How is a parameter different from an argument?", "course": "Programming", "evidence": [{"document": "code-functions", "quote": "A parameter is a name in a function definition; an argument is a value supplied when the function is called."}]},
+    {"id": "code-04", "query": "What statement sends a function's result back to the code that called it?", "evidence": [{"document": "code-functions", "quote": "A return statement ends function execution and sends a result to the caller."}]},
+    {"id": "code-05", "query": "Which Python collection can I use to eliminate repeated elements?", "course": "Programming", "evidence": [{"document": "code-collections", "quote": "A set contains distinct elements and can remove duplicates from an iterable."}]},
+    {"id": "code-06", "query": "How do list and tuple mutability differ?", "evidence": [{"document": "code-collections", "quote": "A Python list is a mutable ordered sequence. A tuple is an immutable sequence."}]},
+    {"id": "db-01", "query": "Which constraint prevents a reference to a nonexistent related row?", "course": "Databases", "evidence": [{"document": "db-keys", "quote": "A foreign key references a key in a related table to enforce referential integrity."}]},
+    {"id": "db-02", "query": "What is a key formed from several columns called?", "evidence": [{"document": "db-keys", "quote": "A composite key uses two or more columns together to identify a row."}]},
+    {"id": "db-03", "query": "Which transaction property guarantees all changes happen or none happen?", "course": "Databases", "evidence": [{"document": "db-transactions", "quote": "Atomicity means a transaction's changes all succeed or none take effect."}]},
+    {"id": "db-04", "query": "How do I cancel database modifications that have not been committed?", "evidence": [{"document": "db-transactions", "quote": "A rollback discards uncommitted changes."}]},
+    {"id": "db-05", "query": "What are the storage and write-performance costs of faster indexed lookups?", "course": "Databases", "evidence": [{"document": "db-indexes", "quote": "An index can accelerate lookups but consumes storage and adds work to inserts, updates, and deletes."}]},
+    {"id": "db-06", "query": "Why split duplicated database facts into normalised relations?", "evidence": [{"document": "db-indexes", "quote": "Normalisation reduces duplicated facts and helps avoid insertion, update, and deletion anomalies."}]},
+    {"id": "unknown-net", "query": "What is the administrator password for the campus router?", "course": "Networking", "kind": "unanswerable"},
+    {"id": "unknown-code", "query": "On what date will our programming examination take place?", "course": "Programming", "kind": "unanswerable"},
+    {"id": "unknown-db", "query": "How many students are enrolled at this university this semester?", "course": "Databases", "kind": "unanswerable"}
+  ]
+}

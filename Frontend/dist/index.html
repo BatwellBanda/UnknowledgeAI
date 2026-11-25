@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Your course materials, searchable and connected.">
+  <title>UniKnowledge AI · Your learning workspace</title>
+  <link rel="stylesheet" href="./styles.css"><script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div id="notification" role="status" aria-live="polite" hidden></div>
+  <main id="auth-screen" class="auth-screen">
+    <section class="auth-story">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">U<span>·</span></span> UniKnowledge <span class="ai-label">AI</span></div>
+      <div class="story-content"><span class="eyebrow">A little more clarity. Every day.</span><h1>Your materials.<br>Your next<br><em>breakthrough.</em></h1><p>Keep your course materials together. Find the passage you need. Follow an answer back to its source.</p><div class="story-lines" aria-hidden="true"><span></span><span></span><span></span></div></div>
+      <div class="story-footer">Built for the way you learn.</div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-form-wrap"><span class="eyebrow">Your learning workspace</span><h2 id="auth-title">Welcome back.</h2><p id="auth-description" class="muted">Sign in to pick up where you left off.</p>
+        <form id="auth-form">
+          <label id="name-label" hidden>Full name<input id="full-name" autocomplete="name" maxlength="150"></label>
+          <label>Email address<input id="email" type="email" autocomplete="username" required maxlength="150" placeholder="you@university.edu"></label>
+          <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+          <p id="password-help" class="small muted" hidden>Use a passphrase with at least 12 characters.</p>
+          <p id="auth-error" class="error" role="alert" hidden></p>
+          <button id="auth-submit" class="button primary wide" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="auth-switch"><span id="auth-switch-label">New here?</span> <button id="auth-toggle" class="text-button">Create an account</button></p>
+        <div class="auth-note"><span class="note-dot" aria-hidden="true"></span>Your personal uploads stay private.</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">U<span>·</span></span><span>UniKnowledge<br><small>Learning workspace</small></span></div>
+      <nav aria-label="Main navigation"><span class="nav-label">WORKSPACE</span><button data-view="library" class="nav-item active"><span aria-hidden="true">▤</span> My materials</button><button data-view="courses" class="nav-item"><span aria-hidden="true">◫</span> Courses</button><button data-view="assistant" class="nav-item"><span aria-hidden="true">✦</span> Search & answers</button></nav>
+      <div class="sidebar-note"><span class="eyebrow">Make it a habit</span><p>Start with one question.<br>Find one useful passage.</p></div>
+      <div class="profile"><span id="avatar" class="avatar"></span><div><strong id="profile-name"></strong><small id="profile-role"></small></div><button id="logout" class="icon-button" aria-label="Sign out" title="Sign out">↪</button></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar"><span id="breadcrumb">Workspace / My materials</span><span class="private-label"><span class="note-dot" aria-hidden="true"></span> Your personal workspace</span></header>
+      <section id="library-view" class="view">
+        <div class="page-heading"><div><span class="eyebrow">A home for your knowledge</span><h1>My materials<span class="heading-dot">.</span></h1><p class="muted">Everything you need for your next good question.</p></div><button id="open-upload" class="button primary">＋ Upload material</button></div>
+        <div class="welcome-strip"><div class="strip-icon" aria-hidden="true">✦</div><div><h3>Turn a lecture into a starting point.</h3><p>Upload your notes, process them, then search or ask a question with sources.</p></div><button id="go-assistant" class="text-button">Explore your materials <span aria-hidden="true">↗</span></button></div>
+        <div class="section-toolbar"><div><h2>Your library</h2><p id="library-count" class="small muted"></p></div><div class="toolbar-controls"><label class="sr-only" for="library-filter">Filter library by course</label><select id="library-filter"><option value="">All materials</option></select><button id="refresh-library" class="button secondary compact">Refresh</button></div></div>
+        <div id="library-error" class="error" role="alert" hidden></div><div id="documents" class="document-grid" aria-live="polite"></div><button id="load-documents" class="button secondary load-more" hidden>Load more materials</button>
+      </section>
+      <section id="courses-view" class="view" hidden>
+        <div class="page-heading"><div><span class="eyebrow">Keep your learning connected</span><h1>Your courses<span class="heading-dot">.</span></h1><p class="muted">Join a course to find its published materials.</p></div></div>
+        <div id="course-create" class="panel" hidden><h2>Create a course</h2><form id="course-form" class="inline-form"><label>Course code<input id="course-code" required maxlength="20" placeholder="ICT101"></label><label>Course title<input id="course-title" required maxlength="200" placeholder="Introduction to Programming"></label><button class="button primary">Create course</button></form></div>
+        <div id="courses-error" class="error" role="alert" hidden></div><div id="courses" class="document-grid" aria-live="polite"></div><button id="load-courses" class="button secondary load-more" hidden>Load more courses</button>
+      </section>
+      <section id="assistant-view" class="view" hidden>
+        <div class="page-heading"><div><span class="eyebrow">Understanding starts here</span><h1>Ask. Find. Understand<span class="heading-dot">.</span></h1><p class="muted">Start with your own materials, and keep the source in view.</p></div></div>
+        <form id="question-form" class="question-panel">
+          <div class="question-toolbar"><fieldset class="mode-switch"><legend class="sr-only">Question mode</legend><label><input type="radio" name="mode" value="search" checked> Find passages</label><label><input type="radio" name="mode" value="chat"> Ask the assistant</label></fieldset><label><span class="sr-only">Search course</span><select id="question-course"><option value="">All my materials</option></select></label></div>
+          <label for="question" class="sr-only">Your question</label><textarea id="question" required maxlength="2000" rows="3" placeholder="What would you like to understand?"></textarea>
+          <div class="question-footer"><span class="small muted">Searches your private notes and authorised course materials.</span><button id="question-submit" class="button primary">Find passages <span aria-hidden="true">↗</span></button></div>
+        </form>
+        <p id="question-error" class="error" role="alert" hidden></p><div id="answer" aria-live="polite"><div class="empty assistant-empty"><span aria-hidden="true">✦</span><h2>A question is a good place to start.</h2><p>Process a document in your library, then look for an idea, definition, or explanation.</p></div></div>
+      </section>
+      <footer class="workspace-footer">UniKnowledge AI <span>Small steps. Clearer understanding.</span></footer>
+    </main>
+  </div>
+
+  <dialog id="upload-dialog"><form id="upload-form"><div class="dialog-heading"><div><span class="eyebrow">Add to your library</span><h2>Upload material</h2></div><button type="button" data-close="upload-dialog" class="icon-button" aria-label="Close upload">×</button></div><label class="file-picker">Choose your document<input id="upload-file" type="file" accept=".pdf,.docx,.pptx,.txt" required><small>PDF, Word, PowerPoint or TXT · up to 20 MB</small></label><label>Course (optional)<select id="upload-course"><option value="">Personal material</option></select></label><label id="share-label" class="checkbox-label" hidden><input id="share-material" type="checkbox">Publish to enrolled students</label><p class="small muted">Your upload is private unless you explicitly publish it.</p><p id="upload-error" class="error" role="alert" hidden></p><button id="upload-submit" class="button primary wide">Upload & process</button></form></dialog>
+  <dialog id="join-dialog"><form id="join-form"><div class="dialog-heading"><div><span class="eyebrow">Join a course</span><h2 id="join-title">Enter the join code</h2><p class="muted">Ask your lecturer for the course's 8-character join code.</p></div><button type="button" data-close="join-dialog" class="icon-button" aria-label="Close join">×</button></div><label>Join code<input id="join-code" required maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD2345"></label><p id="join-error" class="error" role="alert" hidden></p><button id="join-submit" class="button primary wide">Join course ↗</button></form></dialog>
+  <dialog id="roster-dialog"><div class="dialog-heading"><div><span class="eyebrow">Course roster</span><h2 id="roster-title">Students</h2></div><button data-close="roster-dialog" class="icon-button" aria-label="Close roster">×</button></div><p id="roster-error" class="error" role="alert" hidden></p><div id="roster" class="source-content"></div></dialog>
+  <dialog id="source-dialog"><div class="dialog-heading"><div><span class="eyebrow">Go back to the source</span><h2 id="source-title">Source passage</h2><p id="source-location" class="muted"></p></div><button data-close="source-dialog" class="icon-button" aria-label="Close source">×</button></div><div id="source-content" class="source-content"></div></dialog>
+</body>
+</html>

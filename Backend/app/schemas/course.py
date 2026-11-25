@@ -26,6 +26,8 @@ class CourseResponse(BaseModel):
     description: str | None
     instructor_id: uuid.UUID
     created_at: datetime
+    # Present only for the course instructor or an admin.
+    join_code: str | None = None
 
 
 class EnrollmentResponse(BaseModel):
@@ -35,3 +37,19 @@ class EnrollmentResponse(BaseModel):
     course_id: uuid.UUID
     user_id: uuid.UUID
     created_at: datetime
+
+
+class EnrollRequest(BaseModel):
+    join_code: str = Field(min_length=1, max_length=16)
+
+    @field_validator("join_code", mode="before")
+    @classmethod
+    def normalise_code(cls, value):
+        return value.strip().upper() if isinstance(value, str) else value
+
+
+class RosterEntry(BaseModel):
+    user_id: uuid.UUID
+    full_name: str
+    email: str
+    enrolled_at: datetime

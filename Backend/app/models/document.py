@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, ForeignKey, DateTime, func, BigInteger, Text, CheckConstraint
+from sqlalchemy import Column, String, ForeignKey, DateTime, func, BigInteger, Text, CheckConstraint, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from database.connection import Base
@@ -12,7 +12,7 @@ class Document(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="RESTRICT"), nullable=True, index=True)
     visibility = Column(String(10), nullable=False, default="private", server_default="private")
     original_filename = Column(String(255), nullable=False)
@@ -21,6 +21,7 @@ class Document(Base):
     file_size_bytes = Column(BigInteger, nullable=False)
     processing_status = Column(String(20), nullable=False, default="uploaded")
     extracted_text = Column(Text, nullable=True)
+    extracted_segments = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     owner = relationship("User")

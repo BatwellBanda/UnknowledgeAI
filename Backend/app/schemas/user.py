@@ -1,6 +1,12 @@
 import uuid
 from typing import Literal
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+def check_password_bytes(value: str) -> str:
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("Password must be at most 72 UTF-8 bytes")
+    return value
+
 
 class UserRegister(BaseModel):
     full_name: str = Field(min_length=1, max_length=150)
@@ -20,14 +26,31 @@ class UserRegister(BaseModel):
 
     @field_validator("password")
     @classmethod
-    def check_password_bytes(cls, value: str) -> str:
-        if len(value.encode("utf-8")) > 72:
-            raise ValueError("Password must be at most 72 UTF-8 bytes")
-        return value
+    def password_bytes(cls, value: str) -> str:
+        return check_password_bytes(value)
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(max_length=4096, repr=False)
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(max_length=4096, repr=False)
+    new_password: str = Field(min_length=12, max_length=72, repr=False)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_bytes(cls, value: str) -> str:
+        return check_password_bytes(value)
+
+
+class RoleChange(BaseModel):
+    role: Literal["STUDENT", "LECTURER", "ADMIN"]
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalise_role(cls, value):
+        return value.upper() if isinstance(value, str) else value
+
 
 class UserResponse(BaseModel):
     id: uuid.UUID
@@ -35,8 +58,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):
     access_token: str
