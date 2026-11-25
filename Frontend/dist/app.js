@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const tokenKey = 'uniknowledge.session';
 let savedToken = null;
 try { savedToken = sessionStorage.getItem(tokenKey); } catch { /* Use memory-only sign-in when browser storage is unavailable. */ }
-const state = { token: savedToken, user: null, epoch: 0, documents: [], courses: [], mine: [], jobs: new Map(), pending: new Set(), requests: new Set(), view: 'library', register: false, poll: null };
+const state = { token: savedToken, user: null, epoch: 0, documents: [], courses: [], mine: [], jobs: new Map(), pending: new Set(), requests: new Set(), view: 'library', register: false, poll: null, practice: { topics: [], questions: [], plan: null }, quiz: null, authoring: null };
 const active = (job) => job && ['queued', 'running'].includes(job.status);
 function node(tag, className = '', text = '') { const n = document.createElement(tag); n.className = className; n.textContent = text; return n; }
 function control(text, action, className = 'button secondary compact') { const b = node('button', className, text); b.type = 'button'; b.addEventListener('click', () => Promise.resolve(action()).catch((e) => { if (!e.cancelled) notify(e.message); })); return b; }
@@ -12,8 +12,8 @@ function notify(message) { $('notification').textContent = message; $('notificat
 function logout(message = '') {
   state.epoch++; state.requests.forEach((c) => c.abort()); state.requests.clear(); clearTimeout(state.poll); state.poll = null;
   try { sessionStorage.removeItem(tokenKey); } catch { /* No persistent token in this mode. */ }
-  state.token = null; state.user = null; state.documents = []; state.courses = []; state.mine = []; state.jobs.clear(); state.pending.clear();
-  ['documents', 'courses', 'answer', 'source-content'].forEach((id) => $(id).replaceChildren());
+  state.token = null; state.user = null; state.documents = []; state.courses = []; state.mine = []; state.jobs.clear(); state.pending.clear(); state.practice = { topics: [], questions: [], plan: null }; state.quiz = null; state.authoring = null;
+  ['documents', 'courses', 'answer', 'source-content', 'mastery', 'plan-sessions', 'plan-notes', 'my-questions', 'quiz-items'].forEach((id) => $(id).replaceChildren());
   document.querySelectorAll('dialog[open]').forEach((d) => d.close()); $('question-form').reset(); $('upload-form').reset(); $('workspace').hidden = true; $('auth-screen').hidden = false;
   error('auth-error', message); $('auth-form').reset(); $('email').focus();
 }
@@ -31,6 +31,7 @@ async function api(path, options = {}, responseType = 'json') {
       if (response.status === 401 && !path.startsWith('/auth/')) { logout('Your session has expired. Please sign in again.'); throw Object.assign(new Error('Session expired'), { cancelled: true }); }
       let message = typeof data?.detail === 'string' ? data.detail : 'Check the form fields and try again.';
       if (response.status >= 500 && path === '/chat') message = response.status === 504 ? 'The assistant took too long. Try a shorter question.' : 'The assistant is unavailable right now. You can still find passages in your materials.';
+      else if (response.status >= 500 && path === '/questions/generate') message = 'AI drafting is unavailable right now. You can still write questions from a passage in Search & answers.';
       else if (response.status >= 500 && path === '/search') message = 'Search is temporarily unavailable. Please try again shortly.';
       else if (response.status >= 500) message = 'The service is temporarily unavailable. Please try again.';
       throw Object.assign(new Error(message), { status: response.status });
@@ -50,15 +51,20 @@ async function busy(button, task, errorId) {
 }
 function navigate(view) {
   if (!state.user) return; state.view = view;
-  ['library', 'courses', 'assistant'].forEach((key) => { $(`${key}-view`).hidden = key !== view; });
+  ['library', 'courses', 'assistant', 'practice'].forEach((key) => { $(`${key}-view`).hidden = key !== view; });
   document.querySelectorAll('[data-view]').forEach((b) => { const selected = b.dataset.view === view; b.classList.toggle('active', selected); if (selected) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  $('breadcrumb').textContent = `Workspace / ${ { library: 'My materials', courses: 'Courses', assistant: 'Search & answers' }[view] }`;
+  $('breadcrumb').textContent = `Workspace / ${ { library: 'My materials', courses: 'Courses', assistant: 'Search & answers', practice: 'Practice & plan' }[view] }`;
+  if (view === 'practice') loadPractice().catch((e) => { if (!e.cancelled) error('practice-error', e.message); });
 }
 function courseOptions() {
   for (const [id, label] of [['library-filter', 'All materials'], ['question-course', 'All my materials'], ['upload-course', 'Personal material']]) {
     const value = $(id).value; $(id).replaceChildren(new Option(label, ''));
     state.mine.forEach((course) => $(id).append(new Option(`${course.code} · ${course.title}`, course.id)));
     if (Array.from($(id).options).some((o) => o.value === value)) $(id).value = value;
+  }
+  for (const id of ['practice-course', 'author-course']) {
+    const value = $(id).value; $(id).replaceChildren(...state.mine.map((course) => new Option(`${course.code} · ${course.title}`, course.id)));
+    if (state.mine.some((c) => c.id === value)) $(id).value = value;
   }
   updateSharing();
 }
@@ -254,7 +260,7 @@ $('question-form').addEventListener('submit', (event) => { event.preventDefault(
   if (mode === 'search') {
     if (!response.results.length) { root.append(empty('No passages to show yet.', response.status === 'no_searchable_materials' ? 'Process your material first, or try another course.' : 'Try a different question or another course.')); return; }
     root.append(node('p', 'small muted', `${response.results.length} relevant passages · similarity is a ranking signal, not answer confidence.`));
-    response.results.forEach((result) => { const card = node('article', 'source-card'); card.append(node('p', 'card-meta', locationLabel(result.source_location)), node('h3', '', result.document_name), node('p', '', result.text)); card.append(control('View source ↗', () => showSource(result.document_name, result.source_location, result.text, result.document_id), 'text-button')); root.append(card); });
+    response.results.forEach((result) => { const card = node('article', 'source-card'); card.append(node('p', 'card-meta', locationLabel(result.source_location)), node('h3', '', result.document_name), node('p', '', result.text)); const actions = node('div', 'card-actions'); actions.append(control('View source ↗', () => showSource(result.document_name, result.source_location, result.text, result.document_id), 'text-button'), control('Make practice question', () => openAuthoring(result))); card.append(actions); root.append(card); });
   } else {
     const panel = node('article', 'answer-panel'); panel.append(node('h2', '', response.status === 'answered' ? 'From your materials' : 'Not enough support in your materials'));
     const text = node('div', 'answer-text'); const sources = new Map(response.citations.map((c) => [c.source_id, c]));
@@ -262,4 +268,176 @@ $('question-form').addEventListener('submit', (event) => { event.preventDefault(
     panel.append(text); const citations = node('div', 'citation-row'); response.citations.forEach((c) => citations.append(control(`${c.source_id} · ${c.document_name} · ${locationLabel(c.source_location)}`, () => showSource(c.document_name, c.source_location, c.quote, c.document_id)))); panel.append(citations); root.append(panel);
   }
 }, 'question-error'); });
+// Practice: topics, mastery, quizzes, the study plan and source-backed questions.
+const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const levelLabel = { not_enough_evidence: 'Not enough evidence', weak: 'Needs work', developing: 'Developing', strong: 'Strong' };
+const kindLabel = { quiz: 'Short quiz', revision: 'Revision', practice: 'Practice', review: 'Quick review' };
+const difficultyLabel = { 1: 'Easy for me', 2: 'Normal', 3: 'Hard for me' };
+function localDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function dayLabel(iso) {
+  const today = localDate(); const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+  if (iso === today) return 'Today'; if (iso === localDate(tomorrow)) return 'Tomorrow';
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+function practiceCourse() { return state.mine.find((c) => c.id === $('practice-course').value); }
+function teaches(course) { return Boolean(course) && course.instructor_id === state.user.id && ['LECTURER', 'ADMIN'].includes(state.user.role); }
+function manages(course) { return Boolean(course) && (course.instructor_id === state.user.id || state.user.role === 'ADMIN'); }
+weekdays.forEach((day, index) => { const label = node('label', 'weekday', day); const input = node('input'); input.type = 'number'; input.id = `weekday-${index}`; input.min = 0; input.max = 600; input.step = 15; input.required = true; label.append(input); $('weekday-inputs').append(label); });
+for (let index = 0; index < 4; index++) {
+  const row = node('div', 'option-row'); const radio = node('input'); radio.type = 'radio'; radio.name = 'author-correct'; radio.value = index; radio.required = true; radio.setAttribute('aria-label', `Option ${index + 1} is correct`);
+  const input = node('input'); input.id = `author-option-${index}`; input.maxLength = 300; input.required = index < 2; input.placeholder = index < 2 ? `Option ${index + 1}` : `Option ${index + 1} (optional)`; input.setAttribute('aria-label', `Option ${index + 1}`);
+  row.append(radio, input); $('author-option-rows').append(row);
+}
+async function loadPractice() {
+  error('practice-error'); const course = practiceCourse(); $('practice-empty').replaceChildren(); $('practice-body').hidden = !course; $('start-quiz').disabled = !course;
+  if (!course) { $('practice-empty').append(empty('Join a course to start practising.', 'Practice questions, progress and your study plan are organised by course.')); return; }
+  const id = course.id; const today = localDate();
+  const [topics, questions] = await Promise.all([api(`/courses/${id}/topics`), api(`/questions?course_id=${id}&limit=100`)]);
+  let plan = await api(`/courses/${id}/study-plan?today=${today}`);
+  const planned = plan.sessions.filter((s) => s.status === 'planned');
+  // Replan when the plan is empty or has fallen behind; otherwise keep it stable.
+  if (topics.length && (!planned.some((s) => s.session_date >= today) || planned.some((s) => s.session_date < today))) plan = await api(`/courses/${id}/study-plan/rebuild?today=${today}`, { method: 'POST' });
+  if ($('practice-course').value !== id) return;
+  state.practice = { topics, questions, plan }; renderPractice();
+}
+function renderPractice() {
+  const course = practiceCourse(); if (!course || !state.practice.plan) return;
+  $('topic-form').hidden = !manages(course);
+  $('generate-topic').replaceChildren(...state.practice.topics.map((t) => new Option(t.name, t.id)));
+  $('generate-form').hidden = !state.practice.topics.length;
+  renderMastery(); renderPlan(); renderQuestions();
+}
+function renderMastery() {
+  const root = $('mastery'); root.replaceChildren(); const { plan } = state.practice; const course = practiceCourse();
+  if (!plan.mastery.length) { root.append(empty('No topics yet.', manages(course) ? 'Add the course topics below so students can practise them.' : 'Your lecturer has not added topics to this course yet.')); return; }
+  plan.mastery.forEach((m) => {
+    const card = node('article', 'document-card'); const top = node('div', 'card-top');
+    top.append(node('span', 'file-icon', 'TOPIC'), node('span', `badge level-${m.level}`, levelLabel[m.level])); card.append(top, node('h3', '', m.topic_name));
+    if (m.score === null) card.append(node('p', 'card-meta', `${m.answers} of 4 answers needed for a score`));
+    else { const meter = node('meter', 'mastery-meter'); meter.min = 0; meter.max = 1; meter.low = 0.6; meter.high = 0.8; meter.optimum = 1; meter.value = m.score; meter.setAttribute('aria-label', `${m.topic_name} mastery`); card.append(meter, node('p', 'card-meta', `${Math.round(m.score * 100)}% · ${m.answers} recent answers`)); }
+    const label = node('label', 'difficulty', 'How hard is it for you?'); const select = node('select');
+    [1, 2, 3].forEach((level) => select.append(new Option(difficultyLabel[level], level))); select.value = plan.settings.topic_difficulty[m.topic_id] || 2;
+    select.addEventListener('change', () => savePlan({ [m.topic_id]: Number(select.value) }).catch((e) => { if (!e.cancelled) error('practice-error', e.message); })); label.append(select); card.append(label);
+    const actions = node('div', 'card-actions'); actions.append(control('Practise this topic', () => startQuiz(m.topic_id))); card.append(actions); root.append(card);
+  });
+}
+function renderPlan() {
+  const { plan } = state.practice; $('exam-date').value = plan.settings.exam_date || ''; $('exam-date').min = localDate();
+  plan.settings.weekday_minutes.forEach((minutes, index) => { $(`weekday-${index}`).value = minutes; });
+  $('plan-notes').replaceChildren(...plan.notes.map((note) => node('li', 'muted', note)));
+  if (!plan.settings.saved) $('plan-notes').append(node('li', 'muted', 'This plan uses default availability (one hour on weekdays). Adjust it to fit your week.'));
+  const root = $('plan-sessions'); root.replaceChildren(); const today = localDate();
+  const visible = plan.sessions.filter((s) => s.session_date >= today || s.status === 'missed');
+  if (!visible.length) { root.append(node('p', 'muted', plan.mastery.length ? 'No sessions planned. Add some available time above.' : 'Your plan will appear once the course has topics.')); return; }
+  const days = new Map(); visible.forEach((s) => { if (!days.has(s.session_date)) days.set(s.session_date, []); days.get(s.session_date).push(s); });
+  days.forEach((sessions, day) => {
+    const group = node('section', 'plan-day'); group.append(node('h3', '', dayLabel(day)));
+    sessions.forEach((s) => {
+      const row = node('article', `plan-session ${s.status}`); const text = node('div');
+      text.append(node('p', 'card-meta', `${kindLabel[s.kind]} · ${s.minutes} min${s.status === 'planned' ? '' : ` · ${s.status === 'missed' ? 'Missed' : 'Done'}`}`), node('strong', '', s.topic_name), node('p', 'small muted', s.reason));
+      const actions = node('div', 'session-actions');
+      if (s.status !== 'completed' && s.session_date <= today) actions.append(control('Practise', () => startQuiz(s.topic_id)), control('Mark done', async () => { await api(`/study-sessions/${s.id}/complete`, { method: 'POST' }); await loadPractice(); notify('Session marked as done.'); }, 'text-button'));
+      row.append(text, actions); group.append(row);
+    });
+    root.append(group);
+  });
+}
+function renderQuestions() {
+  const root = $('my-questions'); root.replaceChildren(); const course = practiceCourse(); const { topics, questions } = state.practice;
+  const topicName = (id) => topics.find((t) => t.id === id)?.name || 'Topic';
+  if (!questions.length) { root.append(node('p', 'muted', 'You have not written practice questions for this course yet.')); return; }
+  if (questions.some((q) => !q.reviewed)) root.append(node('p', 'small muted', 'Check AI drafts against their source before relying on them.'));
+  questions.forEach((q) => {
+    const card = node('article', 'source-card question-card'); const badges = node('div', 'badge-row');
+    badges.append(node('span', 'badge', q.origin === 'generated' ? 'AI draft' : 'Written by you'), node('span', q.reviewed ? 'badge' : 'badge queued', q.reviewed ? 'Reviewed' : 'Needs review'), node('span', 'badge', q.visibility === 'course' ? 'Published to class' : 'Private'));
+    card.append(badges, node('p', 'card-meta', `${topicName(q.topic_id)} · ${locationLabel(q.source_location)}`), node('h3', '', q.stem));
+    const list = node('ol', 'option-list'); q.options.forEach((option, index) => list.append(node('li', index === q.correct_index ? 'correct' : '', index === q.correct_index ? `${option} · correct` : option)));
+    card.append(list, node('p', 'small muted', q.explanation), node('p', 'quote', `“${q.source_quote}”`));
+    const actions = node('div', 'card-actions'); const update = async (body, message) => { await api(`/questions/${q.id}`, { method: 'PATCH', body: JSON.stringify(body) }); await loadPractice(); notify(message); };
+    if (!q.reviewed) actions.append(control('Mark reviewed', () => update({ reviewed: true }, 'Marked as reviewed.')));
+    if (teaches(course)) actions.append(control(q.visibility === 'course' ? 'Unpublish' : 'Publish to class', async () => { await api(`/questions/${q.id}/publish`, { method: q.visibility === 'course' ? 'DELETE' : 'POST' }); await loadPractice(); notify(q.visibility === 'course' ? 'Question is private again.' : 'Enrolled students can now practise this question.'); }));
+    actions.append(control('Delete', async () => { if (!window.confirm('Delete this question? Past quiz results keep their grade.')) return; await api(`/questions/${q.id}`, { method: 'DELETE' }); await loadPractice(); notify('Question deleted.'); }, 'text-button danger'));
+    card.append(actions); root.append(card);
+  });
+}
+function planSettings(difficulty = {}) {
+  return { exam_date: $('exam-date').value || null, weekday_minutes: weekdays.map((_, index) => Math.max(0, Math.min(600, Number($(`weekday-${index}`).value) || 0))), topic_difficulty: { ...state.practice.plan.settings.topic_difficulty, ...difficulty } };
+}
+async function savePlan(difficulty) {
+  const course = practiceCourse(); if (!course) return;
+  state.practice.plan = await api(`/courses/${course.id}/study-plan/settings?today=${localDate()}`, { method: 'PUT', body: JSON.stringify(planSettings(difficulty)) }); renderPractice();
+}
+async function startQuiz(topicId = null) {
+  const course = practiceCourse(); if (!course) return;
+  state.quiz = await api('/quizzes', { method: 'POST', body: JSON.stringify({ course_id: course.id, topic_id: topicId, size: 5 }) });
+  renderQuiz(); if (!$('quiz-dialog').open) $('quiz-dialog').showModal();
+}
+function renderQuiz() {
+  const quiz = state.quiz; const submitted = quiz.status === 'submitted'; const root = $('quiz-items'); root.replaceChildren(); error('quiz-error');
+  $('quiz-title').textContent = submitted ? `You scored ${quiz.correct_count} of ${quiz.total_count}` : `${quiz.total_count} question${quiz.total_count === 1 ? '' : 's'}`;
+  $('quiz-summary').textContent = submitted ? 'Each answer links back to the passage it came from.' : 'Choose one answer for each question. Skip any you do not know; skipped questions count as incorrect.';
+  $('quiz-submit').hidden = submitted;
+  quiz.items.forEach((item) => {
+    const box = node('fieldset', 'quiz-item'); const legend = node('legend'); legend.append(node('span', 'card-meta', item.topic_name || 'Practice'), node('strong', '', `${item.position + 1}. ${item.stem}`)); box.append(legend);
+    item.options.forEach((option, index) => {
+      const label = node('label', 'quiz-option'); const radio = node('input'); radio.type = 'radio'; radio.name = `quiz-${item.position}`; radio.value = index; radio.disabled = submitted; radio.checked = item.chosen_index === index;
+      if (submitted && index === item.correct_index) label.classList.add('correct'); if (submitted && index === item.chosen_index && !item.is_correct) label.classList.add('incorrect');
+      label.append(radio, document.createTextNode(option));
+      // Say it in words as well as colour.
+      if (submitted && index === item.correct_index) label.append(node('span', 'option-mark', index === item.chosen_index ? 'Your answer · correct' : 'Correct answer'));
+      else if (submitted && index === item.chosen_index) label.append(node('span', 'option-mark', 'Your answer'));
+      box.append(label);
+    });
+    if (submitted) {
+      const answer = item.options[item.correct_index];
+      box.append(node('p', item.is_correct ? 'result correct' : 'result incorrect', item.is_correct ? 'Correct.' : item.chosen_index === null ? `Skipped. The answer is “${answer}”.` : `Not quite. The answer is “${answer}”.`));
+      if (item.explanation) box.append(node('p', 'small', item.explanation));
+      if (item.source) box.append(control(`View source · ${item.source.document_name} · ${locationLabel(item.source.source_location)} ↗`, () => showSource(item.source.document_name, item.source.source_location, item.source.quote, item.source.document_id), 'text-button'));
+      else if (item.source_unavailable) box.append(node('p', 'small muted', 'The source for this question is no longer available to you.'));
+    }
+    root.append(box);
+  });
+}
+async function openAuthoring(result) {
+  if (!state.mine.length) { notify('Join a course first. Practice questions belong to a course topic.'); return; }
+  state.authoring = result; $('author-form').reset(); error('author-error');
+  $('author-source').textContent = `${result.document_name} · ${locationLabel(result.source_location)}`; $('author-quote').value = result.text;
+  if (result.course_id && state.mine.some((c) => c.id === result.course_id)) $('author-course').value = result.course_id;
+  else if (!$('author-course').value) $('author-course').value = state.mine[0].id;
+  $('author-dialog').showModal(); await loadAuthorTopics();
+}
+async function loadAuthorTopics() {
+  const id = $('author-course').value; $('author-topic').replaceChildren(new Option('Loading topics…', ''));
+  try {
+    const topics = await api(`/courses/${id}/topics`); if ($('author-course').value !== id) return;
+    $('author-topic').replaceChildren(...(topics.length ? topics.map((t) => new Option(t.name, t.id)) : [new Option('This course has no topics yet', '')]));
+  } catch (e) { if (!e.cancelled) error('author-error', e.message); }
+}
+$('practice-course').addEventListener('change', () => loadPractice().catch((e) => { if (!e.cancelled) error('practice-error', e.message); }));
+$('start-quiz').addEventListener('click', () => busy($('start-quiz'), () => startQuiz(), 'practice-error'));
+$('plan-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('plan-submit'), async () => { await savePlan(); notify('Plan updated.'); }, 'practice-error'); });
+$('topic-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('topic-submit'), async () => {
+  await api(`/courses/${practiceCourse().id}/topics`, { method: 'POST', body: JSON.stringify({ name: $('topic-name').value }) }); $('topic-form').reset(); await loadPractice(); notify('Topic added.');
+}, 'practice-error'); });
+$('generate-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('generate-submit'), async () => {
+  const result = await api('/questions/generate', { method: 'POST', body: JSON.stringify({ topic_id: $('generate-topic').value, count: Number($('generate-count').value) }) });
+  if (result.status === 'no_searchable_materials') notify('Process some course material first; nothing is searchable yet.');
+  else if (result.status === 'no_matches') notify('No passages matched this topic.');
+  else notify(`${result.created.length} draft question${result.created.length === 1 ? '' : 's'} ready to review${result.rejected ? `; ${result.rejected} discarded because they could not be checked against the source` : ''}.`);
+  await loadPractice();
+}, 'practice-error'); });
+$('quiz-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('quiz-submit'), async () => {
+  const answers = {}; state.quiz.items.forEach((item) => { const checked = $('quiz-form').querySelector(`input[name="quiz-${item.position}"]:checked`); answers[item.position] = checked ? Number(checked.value) : null; });
+  state.quiz = await api(`/quizzes/${state.quiz.id}/submit`, { method: 'POST', body: JSON.stringify({ answers }) }); renderQuiz();
+  if (state.view === 'practice') await loadPractice();
+}, 'quiz-error'); });
+$('author-course').addEventListener('change', loadAuthorTopics);
+$('author-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('author-submit'), async () => {
+  const source = state.authoring; if (!source) return; if (!$('author-topic').value) throw new Error('Choose a topic. Your lecturer adds topics to each course.');
+  const correct = Number($('author-form').querySelector('input[name="author-correct"]:checked')?.value ?? -1);
+  const filled = [0, 1, 2, 3].map((index) => ({ index, text: $(`author-option-${index}`).value.trim() })).filter((o) => o.text);
+  const correctIndex = filled.findIndex((o) => o.index === correct); if (correctIndex < 0) throw new Error('Select the correct answer next to a filled-in option.');
+  await api('/questions', { method: 'POST', body: JSON.stringify({ topic_id: $('author-topic').value, chunk_id: source.chunk_id, source_quote: $('author-quote').value, stem: $('author-stem').value, options: filled.map((o) => o.text), correct_index: correctIndex, explanation: $('author-explanation').value }) });
+  $('author-dialog').close(); notify('Question saved. It will appear in your quizzes for this course.');
+}, 'author-error'); });
 if (state.token) api('/users/me').then(enterWorkspace).catch((e) => { if (!e.cancelled) logout(e.message); });

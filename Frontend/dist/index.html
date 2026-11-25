@@ -33,7 +33,7 @@
   <div id="workspace" class="workspace" hidden>
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">U<span>·</span></span><span>UniKnowledge<br><small>Learning workspace</small></span></div>
-      <nav aria-label="Main navigation"><span class="nav-label">WORKSPACE</span><button data-view="library" class="nav-item active"><span aria-hidden="true">▤</span> My materials</button><button data-view="courses" class="nav-item"><span aria-hidden="true">◫</span> Courses</button><button data-view="assistant" class="nav-item"><span aria-hidden="true">✦</span> Search & answers</button></nav>
+      <nav aria-label="Main navigation"><span class="nav-label">WORKSPACE</span><button data-view="library" class="nav-item active"><span aria-hidden="true">▤</span> My materials</button><button data-view="courses" class="nav-item"><span aria-hidden="true">◫</span> Courses</button><button data-view="assistant" class="nav-item"><span aria-hidden="true">✦</span> Search & answers</button><button data-view="practice" class="nav-item"><span aria-hidden="true">◎</span> Practice & plan</button></nav>
       <div class="sidebar-note"><span class="eyebrow">Make it a habit</span><p>Start with one question.<br>Find one useful passage.</p></div>
       <div class="profile"><span id="avatar" class="avatar"></span><div><strong id="profile-name"></strong><small id="profile-role"></small></div><button id="logout" class="icon-button" aria-label="Sign out" title="Sign out">↪</button></div>
     </aside>
@@ -59,6 +59,21 @@
         </form>
         <p id="question-error" class="error" role="alert" hidden></p><div id="answer" aria-live="polite"><div class="empty assistant-empty"><span aria-hidden="true">✦</span><h2>A question is a good place to start.</h2><p>Process a document in your library, then look for an idea, definition, or explanation.</p></div></div>
       </section>
+      <section id="practice-view" class="view" hidden>
+        <div class="page-heading"><div><span class="eyebrow">Practise with purpose</span><h1>Practice & plan<span class="heading-dot">.</span></h1><p class="muted">Quiz yourself from your course sources, see which topics need work, and follow a plan that adapts.</p></div></div>
+        <div class="section-toolbar"><div><h2>Your topics</h2><p class="small muted">Scores weight recent answers more. A topic needs at least 4 answers before it is scored.</p></div><div class="toolbar-controls"><label class="sr-only" for="practice-course">Practice course</label><select id="practice-course"></select><button id="start-quiz" class="button primary compact">Start a quiz</button></div></div>
+        <p id="practice-error" class="error" role="alert" hidden></p><div id="practice-empty"></div>
+        <div id="practice-body" hidden>
+          <div id="mastery" class="document-grid" aria-live="polite"></div>
+          <div class="panel practice-panel"><h2>Study plan</h2><p class="small muted">Enter the minutes you have each day after classes and other commitments. Missed sessions move forward, and the plan updates after every quiz.</p>
+            <form id="plan-form" class="plan-form"><label>Exam date (optional)<input id="exam-date" type="date"></label><fieldset class="weekday-fields"><legend>Minutes available</legend><div id="weekday-inputs" class="weekday-inputs"></div></fieldset><button id="plan-submit" class="button secondary compact">Save & replan</button></form>
+            <ul id="plan-notes" class="plan-notes"></ul><div id="plan-sessions" class="plan-sessions" aria-live="polite"></div></div>
+          <div class="panel practice-panel"><h2>Practice questions</h2><p class="small muted">Every question is tied to a passage in your materials. Use <strong>Make practice question</strong> on a passage in Search & answers, or draft questions with AI and review them here.</p>
+            <form id="topic-form" class="inline-form" hidden><label>New course topic<input id="topic-name" required maxlength="120" placeholder="Subnetting"></label><button id="topic-submit" class="button secondary">Add topic</button></form>
+            <form id="generate-form" class="inline-form"><label>Topic<select id="generate-topic" required></select></label><label>Drafts<select id="generate-count"><option>1</option><option selected>3</option><option>5</option></select></label><button id="generate-submit" class="button secondary">Draft with AI</button></form>
+            <div id="my-questions" class="question-list"></div></div>
+        </div>
+      </section>
       <footer class="workspace-footer">UniKnowledge AI <span>Small steps. Clearer understanding.</span></footer>
     </main>
   </div>
@@ -67,5 +82,13 @@
   <dialog id="join-dialog"><form id="join-form"><div class="dialog-heading"><div><span class="eyebrow">Join a course</span><h2 id="join-title">Enter the join code</h2><p class="muted">Ask your lecturer for the course's 8-character join code.</p></div><button type="button" data-close="join-dialog" class="icon-button" aria-label="Close join">×</button></div><label>Join code<input id="join-code" required maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD2345"></label><p id="join-error" class="error" role="alert" hidden></p><button id="join-submit" class="button primary wide">Join course ↗</button></form></dialog>
   <dialog id="roster-dialog"><div class="dialog-heading"><div><span class="eyebrow">Course roster</span><h2 id="roster-title">Students</h2></div><button data-close="roster-dialog" class="icon-button" aria-label="Close roster">×</button></div><p id="roster-error" class="error" role="alert" hidden></p><div id="roster" class="source-content"></div></dialog>
   <dialog id="source-dialog"><div class="dialog-heading"><div><span class="eyebrow">Go back to the source</span><h2 id="source-title">Source passage</h2><p id="source-location" class="muted"></p></div><button data-close="source-dialog" class="icon-button" aria-label="Close source">×</button></div><div id="source-content" class="source-content"></div></dialog>
+  <dialog id="quiz-dialog" class="wide-dialog"><form id="quiz-form"><div class="dialog-heading"><div><span class="eyebrow">Practice quiz</span><h2 id="quiz-title">Quiz</h2><p id="quiz-summary" class="muted"></p></div><button type="button" data-close="quiz-dialog" class="icon-button" aria-label="Close quiz">×</button></div><div id="quiz-items" class="quiz-items"></div><p id="quiz-error" class="error" role="alert" hidden></p><button id="quiz-submit" class="button primary wide">Submit answers</button></form></dialog>
+  <dialog id="author-dialog" class="wide-dialog"><form id="author-form"><div class="dialog-heading"><div><span class="eyebrow">From a source passage</span><h2>Make a practice question</h2><p id="author-source" class="muted"></p></div><button type="button" data-close="author-dialog" class="icon-button" aria-label="Close question editor">×</button></div>
+    <div class="inline-form"><label>Course<select id="author-course" required></select></label><label>Topic<select id="author-topic" required></select></label></div>
+    <label>Question<textarea id="author-stem" required minlength="5" maxlength="1000" rows="2"></textarea></label>
+    <fieldset class="author-options"><legend>Answer options · select the correct one</legend><div id="author-option-rows"></div></fieldset>
+    <label>Why is it correct?<textarea id="author-explanation" required minlength="5" maxlength="2000" rows="2"></textarea></label>
+    <label>Supporting quote · copied exactly from the passage<textarea id="author-quote" required minlength="3" maxlength="2000" rows="3"></textarea></label>
+    <p id="author-error" class="error" role="alert" hidden></p><button id="author-submit" class="button primary wide">Save question</button></form></dialog>
 </body>
 </html>

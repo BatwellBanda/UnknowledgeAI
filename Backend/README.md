@@ -145,7 +145,7 @@ cd C:\Dev\UniKnowledgeAI\Backend
 
 Tests use Python's unittest runner and HTTPX's ASGI transport. They set a test signing secret and database URL before importing the app and create fresh in-memory SQLite tables for each API case. They do not connect to the development PostgreSQL database, modify uploaded files, or download an embedding model.
 
-Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, course creation/enrolment, publishing, student privacy, revocation, upload failure cleanup, and pagination. Vector retrieval, broader extraction quality, and model generation need separate integration checks.
+Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, course creation/enrolment, publishing, student privacy, revocation, upload failure cleanup, pagination, practice questions, quizzes, mastery, and study planning. Vector retrieval, broader extraction quality, and model generation need separate integration checks.
 
 The opt-in PostgreSQL migration check uses the configured database but creates a fresh schema and rolls its entire transaction back:
 
@@ -311,6 +311,73 @@ Current setup status: code integration and 81 regression tests pass. Ollama is n
 
 References: [Ollama chat API](https://docs.ollama.com/api/chat), [structured JSON output](https://docs.ollama.com/capabilities/structured-outputs), and [initial model details](https://ollama.com/library/qwen2.5:1.5b).
 
+## Practice, mastery and study plans
+
+Open **Practice & plan** in the student app. Run `alembic upgrade head` first (migration `f5c8a2d91b37` adds the tables).
+
+**Topics.** A course's instructor (or an admin) defines its topics; enrolled students read them.
+
+**Questions.** Every multiple-choice question is tied to a passage: its source document, chunk, location and an exact supporting quote.
+- **Writing by hand:** any course member can write a question from a passage they can read, using **Make practice question** on a search result.
+- **AI drafts:** **Draft with AI** retrieves passages for a topic and asks Ollama for one question per passage. A draft is kept only if it has four distinct options and a quote that appears word for word in the passage. The options are shuffled so the answer's position carries no signal. Drafts start private and marked *needs review*.
+- **Publishing:** the course instructor can publish a reviewed question once its source material is published to the same course.
+
+**Visibility.** Permissions are applied in the database query. A question is visible to its author, or to enrolled students once published, and only while the viewer can still read its source document. Answer keys appear only in the author's own list and in submitted quiz results.
+
+**Reprocessing and deletion.**
+- When a document is reprocessed, a question re-attaches to the new passage that contains its quote. If no passage does, it drops out of quizzes.
+- Deleting a source document deletes its questions. Past quiz grades stay.
+
+**Quizzes.** A quiz is assembled in this order:
+1. questions answered wrongly last time;
+2. unseen questions;
+3. the least recently answered correct ones.
+
+Within each group, weaker topics come first. Each attempt keeps a copy of every question as it was asked, so later edits never change a grade. Explanations and source passages are shown only after submission, and only while the source is still readable. Skipped questions count as incorrect.
+
+**Mastery** ([mastery_service.py](app/services/mastery_service.py)) is a recency-weighted share of correct answers. The weights halve every 14 days, and only the latest 20 answers per topic count.
+
+| Level | Rule |
+| --- | --- |
+| Not enough evidence | Fewer than 4 answers; never reported as weak |
+| Weak | Below 60% |
+| Developing | 60–79% |
+| Strong | 80% and above |
+
+**Study plan** ([planner_service.py](app/services/planner_service.py)) is deterministic and explains every session.
+- **Availability:** students enter minutes per weekday after classes, an optional exam date (the plan stops the day before), and how hard each topic is for them. Sessions are 30 minutes, plus a final block of 15 minutes or more.
+- **Priority:** each topic's priority is (1 − mastery, minimum 0.1; 0.5 without evidence) × a difficulty weight (0.8 / 1 / 1.25).
+- **Allocation:** each block goes to the highest priority ÷ (1 + blocks already given). A weak topic earns more time without its priority being counted again for every extra block. A day repeats a topic only when every topic already has a block that day.
+- **Missed sessions:** sessions from the last 14 days are rescheduled first, once per topic, unless the topic is now strong or has since been completed.
+- **Updates:** the plan rebuilds after every quiz submission and settings change. Example reason: *"Subnetting needs revision after your last two quizzes; the exam is in 10 days."*
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET/POST /courses/{id}/topics`, `PATCH /topics/{id}` | List (members) and manage (instructor) topics |
+| `GET/POST /questions`, `PATCH/DELETE /questions/{id}` | Your own questions with answer keys; create from a passage; edit; delete |
+| `POST /questions/generate` | Draft questions with the local model (10 requests per hour) |
+| `POST/DELETE /questions/{id}/publish` | Publish to or withdraw from the class |
+| `POST /quizzes`, `GET /quizzes[/{id}]`, `POST /quizzes/{id}/submit` | Start, review and submit quizzes |
+| `GET /courses/{id}/mastery` | Per-topic mastery |
+| `GET /courses/{id}/study-plan`, `POST …/rebuild`, `PUT …/settings` | Read, replan, set availability/exam/difficulty |
+| `POST /study-sessions/{id}/complete` | Mark a session done |
+
+Plan endpoints accept an optional `today` (the student's local date, within a day of the server's UTC date).
+
+Verify on PostgreSQL in a rolled-back schema:
+
+```powershell
+.\venv\Scripts\python.exe tests/verify_learning_postgres.py
+```
+
+It checks:
+- the migration against the models;
+- the full practice loop through the API;
+- cascade and SET NULL rules, and the check, unique and status constraints;
+- downgrade and re-upgrade.
+
+The planner validates planning *behaviour* on controlled profiles, not improvement in exam results. Generated questions still need human review: the checks confirm structure and an exact supporting quote, not that the distractors are wrong or the question is well posed.
+
 ## Current limits
 
 For repeatable measured retrieval, run `venv\Scripts\python.exe scripts/evaluate_retrieval.py` from `Backend`. See [the evaluation guide](../Docs/RETRIEVAL_EVALUATION.md) for metrics, the initial synthetic development baseline, and preparing separate real-course development/held-out sets. Reports are saved under ignored `tmp/evaluation/` and the temporary database schema is rolled back.
@@ -318,6 +385,7 @@ For repeatable measured retrieval, run `venv\Scripts\python.exe scripts/evaluate
 - Embedded original-file viewers, runtime/model installation, and real-model answer evaluation remain unfinished.
 - `/ready` checks database connectivity and the processing backlog; migration and model readiness remain separate checks.
 - Rate-limit counters are kept in the API process's memory. Run a single API process, or move them to Redis before scaling out.
+- Topics cannot be deleted yet (rename them instead). Two simultaneous plan rebuilds for the same student and course can briefly duplicate planned sessions; the next rebuild replaces them.
 - Email-based password reset and account deletion remain future work; an operator can reset a password with `scripts/create_user.py --reset-password`.
 
 ## Production safeguards
