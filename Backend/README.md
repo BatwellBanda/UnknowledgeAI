@@ -145,7 +145,7 @@ cd C:\Dev\UniKnowledgeAI\Backend
 
 Tests use Python's unittest runner and HTTPX's ASGI transport. They set a test signing secret and database URL before importing the app and create fresh in-memory SQLite tables for each API case. They do not connect to the development PostgreSQL database, modify uploaded files, or download an embedding model.
 
-Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, course creation/enrolment, publishing, student privacy, revocation, upload failure cleanup, pagination, practice questions, quizzes, mastery, and study planning. Vector retrieval, broader extraction quality, and model generation need separate integration checks.
+Coverage includes registration restrictions, validation, login, existing hashes, password byte limits, token validation, database role checks, profiles, course creation/enrolment, publishing, student privacy, revocation, upload failure cleanup, pagination, practice questions, quizzes, mastery, study planning, recordings, captions, transcripts, playback links and notes. Vector retrieval, broader extraction quality, and model generation need separate integration checks.
 
 The opt-in PostgreSQL migration check uses the configured database but creates a fresh schema and rolls its entire transaction back:
 
@@ -378,6 +378,50 @@ It checks:
 
 The planner validates planning *behaviour* on controlled profiles, not improvement in exam results. Generated questions still need human review: the checks confirm structure and an exact supporting quote, not that the distractors are wrong or the question is well posed.
 
+## Lecture recordings, transcripts and notes
+
+Recordings (MP3, M4A, WAV, OGG, WebM, MP4; up to `MAX_RECORDING_MB` and `MAX_RECORDING_MINUTES`) are stored as documents. Course sharing, processing jobs, search, cited answers and practice questions therefore work for them unchanged.
+
+**Install FFmpeg** (it provides `ffprobe` too): `winget install Gyan.FFmpeg`, then open a new terminal. Without it, recording uploads return 503.
+
+Rules:
+- **Upload checks:** the container signature must match the extension. FFprobe then runs in a separate process with a timeout and must find an audio track and a length within the limit. Rejected files are removed.
+- **Transcript sources:**
+  - **Captions:** attach a WebVTT or SubRip file to the upload, or replace the transcript later.
+  - **Whisper:** without captions, processing transcribes the recording locally (Hugging Face `transformers`, `WHISPER_MODEL`, CPU). The model, about 290 MB for `openai/whisper-base`, downloads on first use; `openai/whisper-tiny` is smaller but less accurate.
+  - With `TRANSCRIPTION_PROVIDER=disabled`, processing fails with a message asking for a caption file.
+- **Searchable passages:** consecutive transcript lines are grouped into passages within the embedding token budget. Each passage keeps its time span (`{"kind": "recording", "start_seconds", "end_seconds"}`), so search results and citations offer **Play from m:ss**.
+- **Corrections:** the uploader can correct any line. The transcript is then marked *stale* until the recording is processed again; the old index stays searchable meanwhile. Processing reuses the stored transcript and never re-transcribes over corrections. **Transcribe again** deletes the transcript first.
+- **Playback:** media elements cannot send bearer tokens. The app therefore requests a playback link: a signed token scoped to one user and one recording, expiring after `MEDIA_LINK_MINUTES`, in the query string (which access logs omit).
+  - Each request, including the range requests used for seeking, rechecks current access.
+  - Signing out revokes earlier links.
+  - A playback token is never accepted as a sign-in token.
+- **Notes:** private to their author, optionally pinned to a time in a recording, and hidden while the material is unreadable. Deleting a recording deletes its transcript and notes.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /documents/upload` (with optional `captions` file) | Upload a recording |
+| `GET /documents/{id}/transcript` | Timestamped transcript, source and stale flag |
+| `PUT /documents/{id}/transcript` (multipart `captions`) | Replace with a caption file (uploader) |
+| `DELETE /documents/{id}/transcript` | Remove, so the next processing re-transcribes (uploader) |
+| `PATCH /documents/{id}/transcript/segments/{segment_id}` | Correct a line (uploader) |
+| `POST /documents/{id}/media-link`, `GET /documents/{id}/media?token=…` | Playback link and range-capable stream |
+| `GET/POST /documents/{id}/notes`, `PATCH/DELETE /notes/{id}` | Private notes |
+
+Verify on PostgreSQL in a rolled-back schema (needs FFmpeg and the cached embedding model):
+
+```powershell
+.\venv\Scripts\python.exe tests/verify_recordings_postgres.py
+```
+
+To measure transcription quality, put a checked reference transcript beside each recording (`week3.mp3` + `week3.txt`) and run:
+
+```powershell
+.\venv\Scripts\python.exe tests/evaluate_transcription.py path\to\week3.mp3 --report tmp\transcription.json
+```
+
+It reports word error rate (substitutions, deletions and insertions) and the real-time factor on this machine. This scores transcription alone, separately from notes and answers. Pilot it on real, noisy lecture audio before relying on automatic transcripts.
+
 ## Current limits
 
 For repeatable measured retrieval, run `venv\Scripts\python.exe scripts/evaluate_retrieval.py` from `Backend`. See [the evaluation guide](../Docs/RETRIEVAL_EVALUATION.md) for metrics, the initial synthetic development baseline, and preparing separate real-course development/held-out sets. Reports are saved under ignored `tmp/evaluation/` and the temporary database schema is rolled back.
@@ -386,6 +430,7 @@ For repeatable measured retrieval, run `venv\Scripts\python.exe scripts/evaluate
 - `/ready` checks database connectivity and the processing backlog; migration and model readiness remain separate checks.
 - Rate-limit counters are kept in the API process's memory. Run a single API process, or move them to Redis before scaling out.
 - Topics cannot be deleted yet (rename them instead). Two simultaneous plan rebuilds for the same student and course can briefly duplicate planned sessions; the next rebuild replaces them.
+- Whisper transcription is implemented but has not been run against a real model here; tests mock it. Transcripts have no speaker labels, and a lecturer's slides are not yet linked to moments in a recording. Recording consent and retention rules must come from the institution.
 - Email-based password reset and account deletion remain future work; an operator can reset a password with `scripts/create_user.py --reset-password`.
 
 ## Production safeguards

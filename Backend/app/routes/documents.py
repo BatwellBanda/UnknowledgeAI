@@ -100,10 +100,11 @@ def upload(
     file: UploadFile = File(...),
     course_id: uuid.UUID | None = Form(None),
     visibility: Literal["private", "course"] = Form("private"),
+    captions: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(limit_by_user("upload", 30, 3600)),
 ):
-    return document_service.upload_document(db, file, current_user, course_id, visibility)
+    return document_service.upload_document(db, file, current_user, course_id, visibility, captions)
 
 
 @router.delete("/{document_id}", status_code=204)

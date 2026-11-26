@@ -113,7 +113,7 @@ def process_claimed_job(db, job):
         job.completed_at = datetime.now(timezone.utc)
         job.lease_expires_at = None
         db.commit()
-    except Exception:
+    except Exception as error:
         logger.exception("Processing job %s failed", job_id)
         db.rollback()
         job = db.get(ProcessingJob, job_id)
@@ -121,7 +121,10 @@ def process_claimed_job(db, job):
             return
         job.status = "failed"
         job.stage = stage
-        job.error_message = f"Processing failed during {stage}; retry this document."
+        # Stage errors raised for users (such as "add a caption file") explain what to do next;
+        # anything else stays generic so internal details never reach the client.
+        job.error_message = (error.detail[:200] if isinstance(error, HTTPException) and isinstance(error.detail, str)
+                             else f"Processing failed during {stage}; retry this document.")
         job.completed_at = datetime.now(timezone.utc)
         job.lease_expires_at = None
         document = db.get(Document, document_id)

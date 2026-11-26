@@ -93,9 +93,48 @@ def token_chunk_spans(text: str, tokenizer, max_tokens: int,
         start = next_start
 
 
+def recording_windows(segments: list[dict], *, tokenizer=None, max_tokens=None, chunk_size: int = CHUNK_SIZE) -> list[dict]:
+    """Group consecutive transcript lines into passages that fit the character and token budget.
+
+    Each passage spans whole lines and keeps the time range from its first line's start to its
+    last line's end. A single line that is too long on its own is split, keeping its times.
+    """
+    def fits(text):
+        if len(text) > chunk_size:
+            return False
+        return tokenizer is None or len(tokenizer.encode(text, add_special_tokens=True, truncation=False)) <= max_tokens
+
+    lines = [(clean_text(s["text"]).replace("\n", " "), s["location"]) for s in segments]
+    lines = [(text, location) for text, location in lines if text]
+    pieces, index = [], 0
+    while index < len(lines):
+        text, location = lines[index]
+        if not fits(text):
+            spans = chunk_spans(text, chunk_size) if tokenizer is None else token_chunk_spans(text, tokenizer, max_tokens, chunk_size)
+            pieces.extend({"content": text[start:end].strip(), "source_location": dict(location)}
+                          for start, end in spans if text[start:end].strip())
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and fits(f"{text} {lines[end][0]}"):
+            text = f"{text} {lines[end][0]}"
+            end += 1
+        pieces.append({"content": text, "source_location": {
+            "kind": "recording", "start_seconds": location.get("start_seconds"),
+            "end_seconds": lines[end - 1][1].get("end_seconds")}})
+        index = end
+    return pieces
+
+
 def located_chunks(segments: list[dict], *, tokenizer=None, max_tokens=None) -> list[dict]:
     if (tokenizer is None) != (max_tokens is None):
         raise ValueError("Tokenizer and token budget must be supplied together")
+    recording = [s for s in segments if s["location"]["kind"] == "recording"]
+    if recording:
+        # Transcripts are many short timed lines; index them as passages, never as single lines.
+        if len(recording) != len(segments):
+            raise ValueError("Recording transcripts cannot be mixed with other source kinds")
+        return recording_windows(recording, tokenizer=tokenizer, max_tokens=max_tokens)
     pieces = []
     for segment in segments:
         location = segment["location"]

@@ -13,6 +13,8 @@ class DocumentResponse(BaseModel):
     file_size_bytes: int
     processing_status: str
     created_at: datetime
+    media_kind: Literal["audio", "video"] | None = None
+    media_duration_seconds: float | None = None
 
     class Config:
         from_attributes = True

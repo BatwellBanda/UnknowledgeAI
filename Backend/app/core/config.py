@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_EMBEDDINGS: int = Field(default=4, ge=1, le=64)
     BUSY_WAIT_SECONDS: float = Field(default=10, ge=0, le=120)
 
+    # Lecture recordings: FFmpeg checks and decodes them; Whisper (via transformers) transcribes them.
+    # With transcription disabled, a caption file (.vtt or .srt) supplies the timestamped transcript.
+    MAX_RECORDING_MB: int = Field(default=200, ge=1, le=4096)
+    MAX_RECORDING_MINUTES: int = Field(default=180, ge=1, le=24 * 60)
+    FFMPEG_PATH: str = "ffmpeg"
+    FFPROBE_PATH: str = "ffprobe"
+    TRANSCRIPTION_PROVIDER: Literal["disabled", "whisper"] = "whisper"
+    WHISPER_MODEL: str = Field(default="openai/whisper-base", min_length=1, max_length=200)
+    # A Whisper language name such as "english"; empty lets the model detect the language.
+    TRANSCRIPTION_LANGUAGE: str = Field(default="english", max_length=40)
+    MEDIA_LINK_MINUTES: int = Field(default=120, ge=5, le=24 * 60)
+
     RATE_LIMIT_ENABLED: bool = True
     # Only enable when a trusted reverse proxy sets X-Forwarded-For; otherwise clients can spoof it.
     TRUST_PROXY_HEADERS: bool = False
