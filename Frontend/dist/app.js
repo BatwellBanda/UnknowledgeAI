@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const tokenKey = 'uniknowledge.session';
 let savedToken = null;
 try { savedToken = sessionStorage.getItem(tokenKey); } catch { /* Use memory-only sign-in when browser storage is unavailable. */ }
-const state = { token: savedToken, user: null, epoch: 0, documents: [], courses: [], mine: [], jobs: new Map(), pending: new Set(), requests: new Set(), view: 'library', register: false, poll: null, practice: { topics: [], questions: [], plan: null }, quiz: null, authoring: null };
+const state = { token: savedToken, user: null, epoch: 0, documents: [], courses: [], mine: [], jobs: new Map(), pending: new Set(), requests: new Set(), view: 'library', register: false, poll: null, practice: { topics: [], questions: [], plan: null }, quiz: null, authoring: null, recording: null };
 const active = (job) => job && ['queued', 'running'].includes(job.status);
 function node(tag, className = '', text = '') { const n = document.createElement(tag); n.className = className; n.textContent = text; return n; }
 function control(text, action, className = 'button secondary compact') { const b = node('button', className, text); b.type = 'button'; b.addEventListener('click', () => Promise.resolve(action()).catch((e) => { if (!e.cancelled) notify(e.message); })); return b; }
@@ -12,14 +12,14 @@ function notify(message) { $('notification').textContent = message; $('notificat
 function logout(message = '') {
   state.epoch++; state.requests.forEach((c) => c.abort()); state.requests.clear(); clearTimeout(state.poll); state.poll = null;
   try { sessionStorage.removeItem(tokenKey); } catch { /* No persistent token in this mode. */ }
-  state.token = null; state.user = null; state.documents = []; state.courses = []; state.mine = []; state.jobs.clear(); state.pending.clear(); state.practice = { topics: [], questions: [], plan: null }; state.quiz = null; state.authoring = null;
-  ['documents', 'courses', 'answer', 'source-content', 'mastery', 'plan-sessions', 'plan-notes', 'my-questions', 'quiz-items'].forEach((id) => $(id).replaceChildren());
+  state.token = null; state.user = null; state.documents = []; state.courses = []; state.mine = []; state.jobs.clear(); state.pending.clear(); state.practice = { topics: [], questions: [], plan: null }; state.quiz = null; state.authoring = null; closeRecording();
+  ['documents', 'courses', 'answer', 'source-content', 'mastery', 'plan-sessions', 'plan-notes', 'my-questions', 'quiz-items', 'recording-player', 'transcript', 'notes'].forEach((id) => $(id).replaceChildren());
   document.querySelectorAll('dialog[open]').forEach((d) => d.close()); $('question-form').reset(); $('upload-form').reset(); $('workspace').hidden = true; $('auth-screen').hidden = false;
   error('auth-error', message); $('auth-form').reset(); $('email').focus();
 }
 async function api(path, options = {}, responseType = 'json') {
   const controller = new AbortController(); const epoch = state.epoch; state.requests.add(controller);
-  const timer = setTimeout(() => controller.abort(), 150000);
+  const timer = setTimeout(() => controller.abort(), options.timeout || 150000);
   try {
     const headers = new Headers(options.headers || {});
     if (state.token) headers.set('Authorization', `Bearer ${state.token}`);
@@ -151,16 +151,19 @@ function renderDocuments() {
     const status = statusLabel(document); const owned = document.owner_id === state.user.id; const job = state.jobs.get(document.id);
     const top = node('div', 'card-top'); top.append(node('span', `file-icon ${document.file_type}`, document.file_type.toUpperCase()), node('span', `badge ${status.status}`, status.text));
     const size = document.file_size_bytes < 1024 * 1024 ? `${Math.max(1, Math.round(document.file_size_bytes / 1024))} KB` : `${(document.file_size_bytes / 1024 / 1024).toFixed(1)} MB`;
-    card.append(top, node('h3', '', document.original_filename), node('p', 'card-meta', `${size} · ${new Date(document.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`), node('p', 'card-visibility', document.visibility === 'course' ? 'Shared course material' : 'Private · only you'));
+    const recording = isRecording(document); const length = document.media_duration_seconds ? `${formatTime(document.media_duration_seconds)} ${document.media_kind === 'video' ? 'video' : 'audio'} · ` : '';
+    card.append(top, node('h3', '', document.original_filename), node('p', 'card-meta', `${length}${size} · ${new Date(document.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`), node('p', 'card-visibility', document.visibility === 'course' ? 'Shared course material' : 'Private · only you'));
     const actions = node('div', 'card-actions');
+    if (recording) { const p = control('▶ Open recording', () => openRecording(document.id, document.original_filename), 'button primary compact'); p.dataset.action = 'play'; actions.append(p); }
     actions.append(downloadControl(document.id, document.original_filename));
     if (owned) {
       const b = control(document.processing_status === 'failed' ? 'Retry processing' : document.processing_status === 'embedded' ? 'Process again' : 'Process material', () => queueDocument(document.id)); b.dataset.action = 'process'; b.disabled = active(job) || state.pending.has(document.id); actions.append(b);
       const d = control('Delete', () => deleteDocument(document), 'text-button danger'); d.dataset.action = 'delete'; d.disabled = active(job); actions.append(d);
     }
-    if (['extracted', 'chunked', 'embedded'].includes(document.processing_status)) { const b = control('Read passages ↗', () => readDocument(document), 'text-button'); b.dataset.action = 'read'; actions.append(b); }
+    if (!recording && ['extracted', 'chunked', 'embedded'].includes(document.processing_status)) { const b = control('Read passages ↗', () => readDocument(document), 'text-button'); b.dataset.action = 'read'; actions.append(b); }
     card.append(actions);
-    if (active(job)) card.append(node('p', 'job-note', { queued: 'Waiting to process.', extract: 'Reading your document…', chunk: 'Preparing useful passages…', embed: 'Making your material searchable…' }[job.stage] || 'Processing your material…'));
+    if (!active(job) && document.processing_status === 'failed' && owned && job?.error_message) card.append(node('p', 'job-note job-error', job.error_message));
+    if (active(job)) card.append(node('p', 'job-note', { queued: 'Waiting to process.', extract: recording ? 'Transcribing your recording. Long lectures can take a while…' : 'Reading your document…', chunk: 'Preparing useful passages…', embed: 'Making your material searchable…' }[job.stage] || 'Processing your material…'));
     root.append(card);
   });
   if (focusId && focusAction) root.querySelector(`[data-document-id="${CSS.escape(focusId)}"] [data-action="${CSS.escape(focusAction)}"]`)?.focus({ preventScroll: true });
@@ -190,14 +193,28 @@ async function pollJobs() {
   } catch (e) { if (!e.cancelled) error('library-error', e.message); }
   finally { schedulePoll(); }
 }
+const recordingTypes = ['mp3', 'm4a', 'wav', 'ogg', 'webm', 'mp4'];
+const isRecording = (document) => Boolean(document?.media_kind) || recordingTypes.includes(document?.file_type);
+function formatTime(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0)); const h = Math.floor(total / 3600); const m = Math.floor(total / 60) % 60; const s = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
 function locationLabel(location) {
   if (!location || location.kind === 'unknown') return 'Location unavailable';
+  if (location.kind === 'recording') return `Recording ${formatTime(location.start_seconds)}–${formatTime(location.end_seconds)}`;
   if (location.page) return `Page ${location.page}`; if (location.slide) return `Slide ${location.slide}`;
   if (location.paragraph) return `${location.section ? `${location.section} · ` : ''}Paragraph ${location.paragraph}`;
   if (location.table) return `${location.section ? `${location.section} · ` : ''}Table ${location.table}`;
   return location.line_start === location.line_end ? `Line ${location.line_start}` : `Lines ${location.line_start}–${location.line_end}`;
 }
-function showSource(name, location, text, documentId) { $('source-title').textContent = name; $('source-location').textContent = locationLabel(location); $('source-content').replaceChildren(node('p', '', text), downloadControl(documentId, name)); if (!$('source-dialog').open) $('source-dialog').showModal(); }
+function playControl(documentId, name, location) {
+  return control(`▶ Play from ${formatTime(location.start_seconds)}`, () => openRecording(documentId, name, location.start_seconds), 'button secondary compact');
+}
+function showSource(name, location, text, documentId) {
+  $('source-title').textContent = name; $('source-location').textContent = locationLabel(location);
+  const actions = node('div', 'card-actions'); if (location?.kind === 'recording') actions.append(playControl(documentId, name, location)); actions.append(downloadControl(documentId, name));
+  $('source-content').replaceChildren(node('p', '', text), actions); if (!$('source-dialog').open) $('source-dialog').showModal();
+}
 async function readDocument(document) {
   $('source-title').textContent = document.original_filename; $('source-location').textContent = 'Extracted passages'; $('source-content').replaceChildren(node('p', '', 'Loading passages…')); $('source-dialog').showModal();
   try {
@@ -245,10 +262,13 @@ $('load-documents').addEventListener('click', () => busy($('load-documents'), ()
 $('load-courses').addEventListener('click', () => busy($('load-courses'), () => loadCourses(true), 'courses-error'));
 $('upload-course').addEventListener('change', updateSharing);
 $('upload-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('upload-submit'), async () => {
-  const file = $('upload-file').files[0]; if (!file) throw new Error('Choose a document first.'); if (file.size > 20 * 1024 * 1024) throw new Error('Choose a file smaller than 20 MB.');
-  if (!/\.(pdf|docx|pptx|txt)$/i.test(file.name)) throw new Error('Choose a PDF, Word, PowerPoint, or TXT file.');
+  const file = $('upload-file').files[0]; if (!file) throw new Error('Choose a document first.'); const recording = uploadIsRecording();
+  if (!recording && !/\.(pdf|docx|pptx|txt)$/i.test(file.name)) throw new Error('Choose a PDF, Word, PowerPoint or TXT file, or a lecture recording.');
+  if (file.size > (recording ? 200 : 20) * 1024 * 1024) throw new Error(recording ? 'Choose a recording smaller than 200 MB.' : 'Choose a file smaller than 20 MB.');
   const data = new FormData(); data.append('file', file); if ($('upload-course').value) data.append('course_id', $('upload-course').value); data.append('visibility', $('share-material').checked ? 'course' : 'private');
-  const uploaded = await api('/documents/upload', { method: 'POST', body: data }); $('upload-dialog').close(); $('upload-form').reset(); updateSharing();
+  const captions = $('upload-captions').files[0]; if (recording && captions) data.append('captions', captions);
+  // Large recordings can take a while to send on a slow connection.
+  const uploaded = await api('/documents/upload', { method: 'POST', body: data, timeout: recording ? 30 * 60000 : undefined }); $('upload-dialog').close(); $('upload-form').reset(); $('captions-label').hidden = true; updateSharing();
   try { await queueDocument(uploaded.id); } catch (e) { if (!e.cancelled) notify('Material uploaded. Processing could not start; use Process material in your library.'); }
   $('library-filter').value = ''; navigate('library'); await loadDocuments();
 }, 'upload-error'); });
@@ -260,7 +280,7 @@ $('question-form').addEventListener('submit', (event) => { event.preventDefault(
   if (mode === 'search') {
     if (!response.results.length) { root.append(empty('No passages to show yet.', response.status === 'no_searchable_materials' ? 'Process your material first, or try another course.' : 'Try a different question or another course.')); return; }
     root.append(node('p', 'small muted', `${response.results.length} relevant passages · similarity is a ranking signal, not answer confidence.`));
-    response.results.forEach((result) => { const card = node('article', 'source-card'); card.append(node('p', 'card-meta', locationLabel(result.source_location)), node('h3', '', result.document_name), node('p', '', result.text)); const actions = node('div', 'card-actions'); actions.append(control('View source ↗', () => showSource(result.document_name, result.source_location, result.text, result.document_id), 'text-button'), control('Make practice question', () => openAuthoring(result))); card.append(actions); root.append(card); });
+    response.results.forEach((result) => { const card = node('article', 'source-card'); card.append(node('p', 'card-meta', locationLabel(result.source_location)), node('h3', '', result.document_name), node('p', '', result.text)); const actions = node('div', 'card-actions'); if (result.source_location?.kind === 'recording') actions.append(playControl(result.document_id, result.document_name, result.source_location)); actions.append(control('View source ↗', () => showSource(result.document_name, result.source_location, result.text, result.document_id), 'text-button'), control('Make practice question', () => openAuthoring(result))); card.append(actions); root.append(card); });
   } else {
     const panel = node('article', 'answer-panel'); panel.append(node('h2', '', response.status === 'answered' ? 'From your materials' : 'Not enough support in your materials'));
     const text = node('div', 'answer-text'); const sources = new Map(response.citations.map((c) => [c.source_id, c]));
@@ -268,6 +288,131 @@ $('question-form').addEventListener('submit', (event) => { event.preventDefault(
     panel.append(text); const citations = node('div', 'citation-row'); response.citations.forEach((c) => citations.append(control(`${c.source_id} · ${c.document_name} · ${locationLabel(c.source_location)}`, () => showSource(c.document_name, c.source_location, c.quote, c.document_id)))); panel.append(citations); root.append(panel);
   }
 }, 'question-error'); });
+// Recordings: playback from any passage, a timestamped transcript the uploader can correct, and private notes.
+function uploadIsRecording() { const file = $('upload-file').files[0]; return Boolean(file) && new RegExp(`\\.(${recordingTypes.join('|')})$`, 'i').test(file.name); }
+function media() { return $('recording-player').querySelector('audio, video'); }
+function closeRecording() {
+  const player = media(); if (player) { player.pause(); player.removeAttribute('src'); player.load(); }
+  state.recording = null;
+}
+function seek(seconds) { const player = media(); if (!player) return; player.currentTime = seconds; player.play().catch(() => { /* The student can press play. */ }); }
+async function openRecording(id, name, start = 0) {
+  closeRecording();
+  const recording = { id, start: Math.max(0, Number(start) || 0), document: null, transcript: null, notes: [], editing: null, editingNote: null }; state.recording = recording;
+  $('recording-title').textContent = name; $('recording-meta').textContent = 'Loading the recording…'; error('recording-error'); $('recording-stale').hidden = true; $('transcript-filter').value = ''; $('note-body').value = '';
+  ['recording-player', 'transcript', 'notes', 'transcript-tools'].forEach((key) => $(key).replaceChildren());
+  if ($('source-dialog').open) $('source-dialog').close();
+  if (!$('recording-dialog').open) $('recording-dialog').showModal();
+  try {
+    const [document, link, transcript, notes] = await Promise.all([api(`/documents/${id}`), api(`/documents/${id}/media-link`, { method: 'POST' }), api(`/documents/${id}/transcript`), api(`/documents/${id}/notes`)]);
+    if (state.recording !== recording) return;
+    Object.assign(recording, { document, transcript, notes });
+    const player = node(document.media_kind === 'video' ? 'video' : 'audio', 'media'); player.controls = true; player.preload = 'metadata';
+    player.setAttribute('aria-label', `Play ${name}`);
+    // A media fragment starts playback at the passage; the server answers range requests for seeking.
+    player.src = recording.start ? `${link.url}#t=${recording.start}` : link.url;
+    player.addEventListener('timeupdate', () => highlightSegment(player.currentTime));
+    player.addEventListener('error', () => { if (state.recording === recording) error('recording-error', 'Playback stopped. Close the recording and open it again.'); });
+    $('recording-player').append(player);
+    renderRecordingMeta(); renderTranscript(); renderNotes(); highlightSegment(recording.start);
+  } catch (e) { if (!e.cancelled && state.recording === recording) { $('recording-meta').textContent = ''; error('recording-error', e.message); } }
+}
+function renderRecordingMeta() {
+  const { id, document, transcript } = state.recording; const parts = [];
+  if (document.media_duration_seconds) parts.push(`${formatTime(document.media_duration_seconds)} ${document.media_kind === 'video' ? 'video' : 'audio'}`);
+  parts.push(transcript.source === 'captions' ? 'Transcript from captions' : transcript.source ? 'Automatic transcript · check names and figures against the audio' : 'No transcript yet');
+  if (transcript.segments.some((s) => s.edited)) parts.push('corrected by the uploader');
+  $('recording-meta').textContent = parts.join(' · ');
+  const tools = $('transcript-tools'); tools.replaceChildren(); const banner = $('recording-stale'); banner.hidden = true;
+  if (!transcript.editable) return;
+  const processing = active(state.jobs.get(id));
+  const reprocess = (label) => control(label, async () => { await queueDocument(id); if (state.recording?.id === id) { state.recording.transcript.stale = false; renderRecordingMeta(); } });
+  if (processing) { banner.hidden = false; banner.replaceChildren(node('span', '', 'Processing this recording. Search and answers will use the new transcript when it finishes.')); }
+  else if (transcript.stale) { banner.hidden = false; banner.replaceChildren(node('span', '', 'You changed the transcript. Search and answers still use the previous version.'), reprocess('Update search')); }
+  else if (document.processing_status !== 'embedded') { banner.hidden = false; banner.replaceChildren(node('span', '', transcript.segments.length ? 'This transcript is not searchable yet.' : 'Process the recording to create its transcript.'), reprocess('Process recording')); }
+  tools.append(control('Replace captions', () => $('captions-file').click(), 'text-button'));
+  if (transcript.segments.length) tools.append(control('Transcribe again', async () => {
+    if (!window.confirm('Remove this transcript, including your corrections, and transcribe the recording again? This needs automatic transcription on the server.')) return;
+    await api(`/documents/${id}/transcript`, { method: 'DELETE' }); if (state.recording?.id !== id) return;
+    state.recording.transcript = await api(`/documents/${id}/transcript`); renderRecordingMeta(); renderTranscript(); await queueDocument(id); renderRecordingMeta();
+  }, 'text-button danger'));
+}
+function renderTranscript() {
+  const recording = state.recording; const { transcript } = recording; const root = $('transcript'); root.replaceChildren(); const filter = $('transcript-filter').value.trim().toLowerCase();
+  if (!transcript.segments.length) { root.append(node('li', 'muted transcript-empty', transcript.editable ? 'No transcript yet. Process the recording to transcribe it, or use Replace captions to add a caption file.' : 'The transcript is not ready yet. You can still play the recording.')); return; }
+  transcript.segments.forEach((segment) => {
+    if (filter && !segment.text.toLowerCase().includes(filter)) return;
+    const item = node('li', 'segment'); item.dataset.start = segment.start_seconds;
+    const time = control(formatTime(segment.start_seconds), () => seek(segment.start_seconds), 'time-button'); time.setAttribute('aria-label', `Play from ${formatTime(segment.start_seconds)}`); item.append(time);
+    if (recording.editing === segment.id) {
+      const form = node('form', 'inline-edit'); const input = node('textarea'); input.value = segment.text; input.rows = 2; input.maxLength = 2000; input.required = true; input.setAttribute('aria-label', `Transcript at ${formatTime(segment.start_seconds)}`);
+      const save = node('button', 'button primary compact', 'Save'); form.append(input, save, control('Cancel', () => { recording.editing = null; renderTranscript(); }, 'text-button'));
+      form.addEventListener('submit', (event) => { event.preventDefault(); busy(save, async () => {
+        const updated = await api(`/documents/${recording.id}/transcript/segments/${segment.id}`, { method: 'PATCH', body: JSON.stringify({ text: input.value }) });
+        if (state.recording !== recording) return; recording.transcript = updated; recording.editing = null; renderRecordingMeta(); renderTranscript(); notify('Transcript corrected.');
+      }, 'recording-error'); });
+      item.append(form); setTimeout(() => input.focus());
+    } else {
+      item.append(node('span', 'segment-text', segment.text));
+      if (segment.edited) item.append(node('span', 'badge', 'Corrected'));
+      if (transcript.editable) item.append(control('Edit', () => { recording.editing = segment.id; renderTranscript(); }, 'text-button'));
+    }
+    root.append(item);
+  });
+  if (!root.children.length) root.append(node('li', 'muted transcript-empty', 'No lines match.'));
+}
+function highlightSegment(seconds) {
+  if (!state.recording) return; $('note-time').textContent = formatTime(seconds);
+  const root = $('transcript'); let current = null;
+  root.querySelectorAll('.segment').forEach((item) => { if (Number(item.dataset.start) <= seconds + 0.25) current = item; });
+  root.querySelectorAll('.segment.current').forEach((item) => { if (item !== current) { item.classList.remove('current'); item.removeAttribute('aria-current'); } });
+  if (!current || current.classList.contains('current')) return;
+  current.classList.add('current'); current.setAttribute('aria-current', 'true');
+  // Follow playback inside the transcript only, without moving the page or fighting the reader.
+  if (!media()?.paused && (current.offsetTop < root.scrollTop || current.offsetTop > root.scrollTop + root.clientHeight - current.offsetHeight)) root.scrollTop = current.offsetTop - root.clientHeight / 3;
+}
+function renderNotes() {
+  const recording = state.recording; const root = $('notes'); root.replaceChildren();
+  if (!recording.notes.length) { root.append(node('li', 'muted small', 'No notes yet. Pause at a useful moment and write one.')); return; }
+  recording.notes.forEach((note) => {
+    const item = node('li', 'note');
+    if (note.timestamp_seconds !== null) { const time = control(formatTime(note.timestamp_seconds), () => seek(note.timestamp_seconds), 'time-button'); time.setAttribute('aria-label', `Play from ${formatTime(note.timestamp_seconds)}`); item.append(time); }
+    if (recording.editingNote === note.id) {
+      const form = node('form', 'inline-edit'); const input = node('textarea'); input.value = note.body; input.rows = 3; input.maxLength = 5000; input.required = true; input.setAttribute('aria-label', 'Edit note');
+      const save = node('button', 'button primary compact', 'Save'); form.append(input, save, control('Cancel', () => { recording.editingNote = null; renderNotes(); }, 'text-button'));
+      form.addEventListener('submit', (event) => { event.preventDefault(); busy(save, async () => {
+        const updated = await api(`/notes/${note.id}`, { method: 'PATCH', body: JSON.stringify({ body: input.value }) });
+        if (state.recording !== recording) return; recording.notes = recording.notes.map((n) => n.id === note.id ? updated : n); recording.editingNote = null; renderNotes();
+      }, 'recording-error'); });
+      item.append(form); setTimeout(() => input.focus());
+    } else {
+      const actions = node('div', 'note-actions');
+      actions.append(control('Edit', () => { recording.editingNote = note.id; renderNotes(); }, 'text-button'), control('Delete', async () => {
+        if (!window.confirm('Delete this note?')) return; await api(`/notes/${note.id}`, { method: 'DELETE' });
+        if (state.recording !== recording) return; recording.notes = recording.notes.filter((n) => n.id !== note.id); renderNotes();
+      }, 'text-button danger'));
+      item.append(node('p', 'note-body', note.body), actions);
+    }
+    root.append(item);
+  });
+}
+$('upload-file').addEventListener('change', () => { const show = uploadIsRecording(); $('captions-label').hidden = !show; if (!show) $('upload-captions').value = ''; });
+$('recording-dialog').addEventListener('close', closeRecording);
+$('transcript-filter').addEventListener('input', () => { if (state.recording?.transcript) { renderTranscript(); highlightSegment(media()?.currentTime || 0); } });
+$('captions-file').addEventListener('change', () => {
+  const file = $('captions-file').files[0]; const recording = state.recording; if (!file || !recording) return;
+  const data = new FormData(); data.append('captions', file); error('recording-error');
+  api(`/documents/${recording.id}/transcript`, { method: 'PUT', body: data }).then((transcript) => {
+    if (state.recording !== recording) return; recording.transcript = transcript; renderRecordingMeta(); renderTranscript(); notify('Captions imported.');
+  }).catch((e) => { if (!e.cancelled) error('recording-error', e.message); }).finally(() => { $('captions-file').value = ''; });
+});
+$('note-form').addEventListener('submit', (event) => { event.preventDefault(); busy($('note-submit'), async () => {
+  const recording = state.recording; if (!recording?.document) return; const player = media();
+  const timestamp = $('note-pin').checked && player ? Math.round(player.currentTime * 10) / 10 : null;
+  await api(`/documents/${recording.id}/notes`, { method: 'POST', body: JSON.stringify({ body: $('note-body').value, timestamp_seconds: timestamp }) });
+  const notes = await api(`/documents/${recording.id}/notes`); if (state.recording !== recording) return;
+  recording.notes = notes; $('note-body').value = ''; renderNotes(); notify('Note saved.');
+}, 'recording-error'); });
 // Practice: topics, mastery, quizzes, the study plan and source-backed questions.
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const levelLabel = { not_enough_evidence: 'Not enough evidence', weak: 'Needs work', developing: 'Developing', strong: 'Strong' };

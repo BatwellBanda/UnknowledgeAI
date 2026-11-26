@@ -188,6 +188,27 @@ Limits:
 - Planner tests validate behaviour on controlled profiles, not learning gains.
 - Topic deletion and planning around specific class times (rather than minutes per weekday) are future work.
 
+Milestone 6 batch 1, 25 November 2026: lecture recordings (see the [backend README](../Backend/README.md#lecture-recordings-transcripts-and-notes)).
+- **Upload:** audio and video recordings, up to 200 MB and 180 minutes by default. Each is checked by container signature, then by FFprobe in a separate process with a timeout. Recordings are stored as documents, so course sharing, processing jobs, search, cited answers and practice questions apply unchanged.
+- **Timestamped transcripts:** from a WebVTT/SubRip caption file, or from local Whisper during processing. Transcript lines are grouped into passages within the embedding token budget, and each passage keeps its time span.
+- **Corrections:** the uploader can correct any line. Corrections mark the index stale until the recording is reprocessed, and they are never overwritten by re-transcription.
+- **Search-to-playback:** results, citations and quiz sources offer "Play from m:ss". Playback uses short-lived links scoped to one user and one recording; access is rechecked on every range request, and signing out revokes the links.
+- **Editable notes:** private to their author and optionally pinned to a time.
+- **Transcription quality** is tracked separately from note quality with a word-error-rate evaluator (`tests/evaluate_transcription.py`).
+
+Evidence:
+- **Regression tests:** all 187 pass, 25 of them new. They cover caption parsing, transcript grouping, WER, upload checks and clean-up, the separate size limit, transcription once then reuse, the unavailable-transcription message, correction permissions and staleness, caption replacement while processing (409), playback scope/expiry/revocation/range requests, notes privacy and cascade deletion, and real FFprobe/FFmpeg probing and decoding.
+- **PostgreSQL:** `tests/verify_recordings_postgres.py` passes in a rolled-back schema. It checks the models against migration `a3d9e6f1c204`, then runs an API loop with real FFprobe and the cached embedding model: upload, processing, search returning the timed source, byte-range playback, a correction, notes and cascades. It also checks constraints and downgrade/re-upgrade.
+- **Browser:** headless Microsoft Edge, run against an isolated, since-dropped schema with the real worker and synthesised speech. The lecturer uploads a lecture with captions and corrects a line, which shows the stale banner; reprocessing then makes the correction searchable. The student finds the passage, plays from it, seeks from the transcript and notes, filters the transcript, and writes and edits timed notes. A video uploaded without captions fails with guidance to add captions, then succeeds once captions are added. There were no page errors and no overflow at 390 px. The app's CSP blocked Playwright's eval-based polling, as intended, so the check polls from Python instead.
+- **Deployment:** migrations `f5c8a2d91b37` and `a3d9e6f1c204` have not been applied to the development database.
+
+Limits:
+- Real Whisper inference is unverified because the model (about 290 MB for whisper-base) has not been downloaded on this connection. Noisy lecture audio still needs a pilot with reference transcripts.
+- Not yet done: speaker labels, linking slides to recording moments, and offline capture.
+- Recording consent and access requirements must be confirmed with the institution.
+
+Remaining in milestone 6: reduced lecturer/admin features, offline capture of notes (separate from server AI availability), and delivery evidence. Delivery covers automated checks, deployment instructions, backup/restore, a demo dataset and a failure-case demonstration.
+
 This batch supports the existing architecture. A backend rewrite is not justified by the reviewed code.
 
 ## Technical references checked

@@ -9,3 +9,33 @@
 dialog.wide-dialog{max-width:720px}.quiz-items{max-height:62vh;overflow:auto;margin:10px 0 16px}.quiz-item{border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:0 0 14px}.quiz-item legend{padding:0 6px}.quiz-item legend .card-meta{display:block;margin:0}.quiz-option{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:8px;margin:4px 0;font-size:13px;cursor:pointer}.quiz-option:has(input:checked){background:var(--light)}.quiz-option.correct,.quiz-option.correct:has(input:checked){background:#e3efdc;font-weight:600}.quiz-option.incorrect,.quiz-option.incorrect:has(input:checked){background:#faebe7;color:var(--error)}.option-mark{margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}.quiz-option input{margin-top:4px}.result{font-weight:650;margin-top:8px;font-size:13px}.result.correct{color:var(--green)}.result.incorrect{color:var(--error)}
 .author-options{border:0;padding:0;margin:12px 0}.author-options legend{font-size:12px;font-weight:600;margin-bottom:6px}.option-row{display:flex;gap:10px;align-items:center;margin-bottom:8px}.option-row input:not([type=radio]){flex:1}
 @media(max-width:700px){.weekday-inputs{grid-template-columns:repeat(4,1fr)}.plan-session{flex-direction:column;align-items:flex-start}.plan-form{flex-direction:column;align-items:stretch}}
+/* Recordings: player, transcript and notes */
+dialog.recording-dialog{max-width:1040px}
+.recording-player .media{display:block;width:100%;margin:4px 0 14px;border-radius:10px}
+.recording-player video.media{max-height:50vh;background:#111}
+.stale-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f6f8ee;border:1px solid #dfe8c9;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px}
+.recording-layout{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:24px}
+.recording-layout h3{font-size:14px;margin:0}
+.panel-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.transcript-tools,.note-actions{display:flex;gap:14px}
+.transcript-tools .text-button,.note-actions .text-button{font-size:11px;padding:4px 0}
+#transcript-filter{margin:4px 0 10px;min-height:38px;padding:8px 10px}
+.transcript{list-style:none;padding:0;margin:0;max-height:46vh;overflow:auto;position:relative;border:1px solid var(--line);border-radius:8px}
+.segment{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;line-height:1.6}
+.segment:last-child{border-bottom:0}
+.segment.current{background:var(--light);box-shadow:inset 3px 0 0 var(--green)}
+.segment-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.segment .text-button{padding:2px 0;font-size:11px}
+.time-button{flex:none;border:0;background:#eef2ea;color:var(--green);font:600 11px/1.4 ui-monospace,Consolas,monospace;padding:4px 7px;border-radius:5px;cursor:pointer;min-height:26px}
+.time-button:hover,.time-button:focus-visible{background:var(--accent)}
+.transcript-empty{padding:14px;font-size:13px}
+.inline-edit{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.inline-edit textarea{margin-top:0;flex-basis:100%}
+#note-form label{margin-bottom:0}
+#note-form textarea{margin:8px 0 10px}
+#note-pin-label{font-weight:500;margin-bottom:10px}
+.notes{list-style:none;padding:0;margin:16px 0 0;max-height:40vh;overflow:auto}
+.note{border-top:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.note-body{white-space:pre-wrap;font-size:13px;line-height:1.6;overflow-wrap:anywhere;margin:0}
+.job-error{color:var(--error)}
+@media(max-width:700px){.recording-layout{grid-template-columns:1fr}.transcript{max-height:40vh}}

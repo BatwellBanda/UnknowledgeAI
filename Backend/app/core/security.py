@@ -63,7 +63,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
             options={"require": ["exp", "sub"]},
         )
         subject = payload.get("sub")
-        if not isinstance(subject, str):
+        # Scoped tokens (such as playback links) carry a type and must never work as sign-in tokens.
+        if not isinstance(subject, str) or "typ" in payload or "aud" in payload:
             raise credentials_exception
         user_id = uuid.UUID(subject)
         version = payload.get("ver", 0)

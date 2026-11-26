@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 class SourceLocation(BaseModel):
-    kind: Literal["pdf_page", "pptx_slide", "docx_paragraph", "docx_table", "txt_lines", "unknown"]
+    kind: Literal["pdf_page", "pptx_slide", "docx_paragraph", "docx_table", "txt_lines", "recording", "unknown"]
     page: int | None = Field(default=None, ge=1)
     slide: int | None = Field(default=None, ge=1)
     paragraph: int | None = Field(default=None, ge=1)
@@ -11,3 +11,6 @@ class SourceLocation(BaseModel):
     section: str | None = None
     line_start: int | None = Field(default=None, ge=1)
     line_end: int | None = Field(default=None, ge=1)
+    # Recordings: the passage's span in the audio, for playback from that moment.
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, ge=0)

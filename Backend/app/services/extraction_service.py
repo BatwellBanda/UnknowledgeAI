@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.models.document import Document
 from app.models.chunk import DocumentChunk
 from app.models.user import User
-from app.services import extractors
+from app.services import extractors, media_service, transcript_service
 from app.services.extractors import EXTRACTORS
 
 UPLOAD_DIR = str(settings.UPLOAD_DIR)
@@ -41,13 +41,18 @@ def extract_document_text(db: Session, document_id, current_user: User) -> Docum
         raise HTTPException(status_code=404, detail="Document not found")
     if document.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this document")
-    if document.file_type not in EXTRACTORS:
+    recording = media_service.is_recording(document.file_type)
+    if document.file_type not in EXTRACTORS and not recording:
         raise HTTPException(status_code=400, detail="No text extractor available for this file type")
 
     try:
         document.processing_status = "extracting"
         db.commit()
-        segments = run_extractor(document.file_type, os.path.join(UPLOAD_DIR, document.stored_filename))
+        if recording:
+            # The timestamped transcript: captions or edits if present, otherwise speech recognition.
+            segments = transcript_service.recording_segments(db, document)
+        else:
+            segments = run_extractor(document.file_type, os.path.join(UPLOAD_DIR, document.stored_filename))
         if not segments or not any(segment["text"].strip() for segment in segments):
             raise ValueError("No readable text")
         # Re-extraction replaces old chunks and vectors atomically with the new text.
@@ -66,7 +71,13 @@ def extract_document_text(db: Session, document_id, current_user: User) -> Docum
         logger.exception("Text extraction failed for document %s", document_id)
         document.processing_status = "failed"
         db.commit()
-        if isinstance(error, ExtractionTimeout):
+        if isinstance(error, (transcript_service.TranscriptionUnavailable, media_service.MediaToolMissing)):
+            raise HTTPException(status_code=503, detail=(
+                "Automatic transcription is not available on this server. Add a caption file (.vtt or .srt) "
+                "to this recording, then process it again."))
+        if isinstance(error, media_service.MediaError):
+            detail = f"{error}."
+        elif isinstance(error, ExtractionTimeout):
             detail = "The document took too long to read. It may be damaged or too complex; try a simpler export."
         elif isinstance(error, extractors.UnsafeFileError):
             detail = f"{error}."

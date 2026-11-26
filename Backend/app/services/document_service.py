@@ -12,6 +12,7 @@ from app.models.chunk import DocumentChunk
 from app.models.document import Document
 from app.models.user import User
 from app.services.course_service import accessible_course_ids, require_course_membership
+from app.services import media_service
 from app.services.extractors import UnsafeFileError, inspect_upload
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt"}
@@ -47,7 +48,8 @@ def original_document_file(db: Session, document_id, user: User):
     return path, filename or "material"
 
 
-def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, visibility="private") -> Document:
+def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, visibility="private",
+                    captions: UploadFile | None = None) -> Document:
     if visibility not in {"private", "course"}:
         raise HTTPException(status_code=400, detail="Invalid document visibility")
     if visibility == "course" and course_id is None:
@@ -62,21 +64,26 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
     if not original_filename or len(original_filename) > 255:
         raise HTTPException(status_code=400, detail="A filename of at most 255 characters is required")
     ext = os.path.splitext(original_filename)[1].lower()
+    recording = media_service.is_recording(ext.lstrip("."))
 
-    if ext not in ALLOWED_EXTENSIONS:
+    if ext not in ALLOWED_EXTENSIONS and not recording:
+        allowed = sorted(ALLOWED_EXTENSIONS | {f".{kind}" for kind in media_service.RECORDING_TYPES})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(allowed)}",
         )
+    if captions is not None and not recording:
+        raise HTTPException(status_code=400, detail="Caption files can only accompany a recording")
 
     file.file.seek(0, os.SEEK_END)
     file_size = file.file.tell()
     file.file.seek(0)
 
-    if file_size > MAX_FILE_SIZE_BYTES:
+    limit_mb = settings.MAX_RECORDING_MB if recording else MAX_FILE_SIZE_BYTES // (1024 * 1024)
+    if file_size > limit_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File too large. Maximum allowed size is 20 MB.",
+            detail=f"File too large. Maximum allowed size is {limit_mb} MB{' for recordings' if recording else ''}.",
         )
 
     used = db.query(func.coalesce(func.sum(Document.file_size_bytes), 0)).filter(Document.owner_id == owner.id).scalar()
@@ -87,8 +94,11 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
         )
 
     try:
-        inspect_upload(file.file, ext.lstrip("."))
-    except UnsafeFileError as error:
+        if recording:
+            media_service.check_signature(file.file, ext.lstrip("."))
+        else:
+            inspect_upload(file.file, ext.lstrip("."))
+    except (UnsafeFileError, media_service.MediaError) as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{error}.")
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -97,6 +107,24 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
 
     with open(stored_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer, 1024 * 1024)
+
+    media, cues = {}, None
+    if recording:
+        # FFprobe needs the file on disk; remove it again if the recording or its captions are unusable.
+        from app.services import transcript_service
+        try:
+            info = media_service.probe(stored_path)
+            media = {"media_kind": info["kind"], "media_duration_seconds": info["duration"]}
+            if captions is not None:
+                data, caption_type = transcript_service.caption_bytes(captions)
+                cues = transcript_service.parse_captions(data, caption_type, info["duration"])
+        except (media_service.MediaError, transcript_service.CaptionError) as error:
+            os.remove(stored_path)
+            raise HTTPException(status_code=400, detail=f"{error}.")
+        except media_service.MediaToolMissing:
+            os.remove(stored_path)
+            logger.error("Recording upload rejected: FFmpeg/FFprobe not found")
+            raise HTTPException(status_code=503, detail="Recording uploads are not available on this server right now.")
 
     new_document = Document(
         owner_id=owner.id,
@@ -107,9 +135,13 @@ def upload_document(db: Session, file: UploadFile, owner: User, course_id=None, 
         file_type=ext.replace(".", ""),
         file_size_bytes=file_size,
         processing_status="uploaded",
+        **media,
     )
     db.add(new_document)
     try:
+        if cues:
+            db.flush()
+            transcript_service.replace_segments(db, new_document, cues, "captions")
         db.commit()
     except SQLAlchemyError:
         db.rollback()
